@@ -357,13 +357,14 @@ app.get('/api/mobile/item/:code', async (req, res) => {
 // ----------------- MOBILE SCANNER: DISPATCH & LOG -----------------
 app.post('/api/mobile/dispatch', async (req, res) => {
   try {
-    const { asset_code, borrower_name, custodian_id } = req.body;
+    const { asset_code, borrower_name, custodian_id, request_id, quantity } = req.body;
+    const releaseQty = parseInt(quantity, 10) || 1;
 
     if (!asset_code || !borrower_name) {
       return res.status(400).json({ error: "Missing barcode or borrower name" });
     }
 
-    // 1. Fetch current item stock
+    // 1. Fetch item from inventory
     const { data: item, error: fetchErr } = await supabase
       .from('inventory')
       .select('*')
@@ -371,38 +372,42 @@ app.post('/api/mobile/dispatch', async (req, res) => {
       .maybeSingle();
 
     if (fetchErr || !item) {
-      return res.status(404).json({ error: "Item code not registered" });
+      return res.status(404).json({ error: "Item code not registered in inventory" });
     }
 
-    if (item.quantity <= 0) {
-      return res.status(400).json({ error: "Item is currently out of stock" });
+    if (item.quantity < releaseQty) {
+      return res.status(400).json({ error: `Not enough stock. Requested: ${releaseQty}, Available: ${item.quantity}` });
     }
 
-    const nextQty = item.quantity - 1;
+    const nextQty = item.quantity - releaseQty;
     const nextStatus = nextQty === 0 ? "Out of Stock" : item.status;
 
-    // 2. Decrement inventory in Supabase
+    // 2. Decrement inventory count in Supabase
     await supabase
       .from('inventory')
       .update({ quantity: nextQty, status: nextStatus })
       .eq('id', item.id);
 
-    // 3. Write dispatch record to borrow_logs in Supabase
-    const { data: log, error: logErr } = await supabase
+    // 3. Write record into borrow_logs in Supabase
+    await supabase
       .from('borrow_logs')
       .insert([{
         asset_code: asset_code.trim(),
         borrower_name: borrower_name.trim(),
-        custodian_id: custodian_id || "Mobile-Custodian"
-      }])
-      .select()
-      .single();
+        custodian_id: custodian_id || "Mobile-Terminal"
+      }]);
 
-    if (logErr) return res.status(500).json({ error: logErr.message });
+    // 4. Update the request ticket status to 'DISPATCHED' so it leaves Ready to Pickup
+    if (request_id) {
+      await supabase
+        .from('requests')
+        .update({ status: 'DISPATCHED' })
+        .eq('id', request_id);
+    }
 
     res.json({
       success: true,
-      message: `Successfully dispatched ${item.name} to ${borrower_name}`,
+      message: `Dispatched ${releaseQty} unit(s) of ${item.name} to ${borrower_name}`,
       remaining_quantity: nextQty
     });
   } catch (err) {
