@@ -404,6 +404,22 @@ app.patch('/api/mobile/requests/:id/cancel', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+// Fetch ticket requests belonging to a specific student/faculty member
+app.get('/api/public/requests/user/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const { data, error } = await supabase
+      .from('requests')
+      .select('*')
+      .ilike('identifier', identifier.trim())
+      .order('id', { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 app.listen(PORT, () => {
   console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
 });
