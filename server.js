@@ -263,153 +263,66 @@ app.get('/api/admin/requests', async (req, res) => {
   res.json(data);
 });
 
-app.patch('/api/admin/requests/:id', async (req, res) => {
-  const { status } = req.body;
-  const { error } = await supabase
-    .from('requests')
-    .update({ status })
-    .eq('id', req.params.id);
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true });
-});
-
-const PORT = process.env.PORT || 5000;
-// ----------------- MOBILE: GET APPROVED REQUESTS -----------------
-app.get('/api/mobile/approved-requests', async (req, res) => {
+// Mobile endpoint to cancel/remove an approved ticket if item is unavailable
+app.patch('/api/mobile/requests/:id/cancel', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { reason } = req.body;
+    const { error } = await supabase
       .from('requests')
-      .select('*')
-      .eq('status', 'APPROVED')
-      .order('id', { ascending: false });
+      .update({ status: 'UNAVAILABLE_CANCELLED' })
+      .eq('id', req.params.id);
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    res.json({ success: true, message: "Ticket marked unavailable and removed." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ----------------- ADMIN: RETURN & RESTOCK ASSET -----------------
-app.post('/api/admin/return-item', async (req, res) => {
+// Admin Ingest/Restock: If item exists, increase quantity; otherwise insert
+app.post('/api/admin/inventory', async (req, res) => {
   try {
-    const { request_id, asset_code, quantity } = req.body;
-    const restockQty = parseInt(quantity, 10) || 1;
+    const { name, category, quantity, asset_code } = req.body;
+    const parsedQty = parseInt(quantity, 10);
 
-    // 1. If linked to an asset code, increase inventory stock
-    if (asset_code) {
-      const { data: item, error: fetchErr } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('asset_code', asset_code.trim())
-        .maybeSingle();
-
-      if (fetchErr) return res.status(500).json({ error: fetchErr.message });
-
-      if (item) {
-        const updatedQty = item.quantity + restockQty;
-        await supabase
-          .from('inventory')
-          .update({
-            quantity: updatedQty,
-            status: updatedQty > 0 ? 'Available' : 'Out of Stock'
-          })
-          .eq('id', item.id);
-      }
-    }
-
-    // 2. Mark the requisition ticket as 'RETURNED'
-    if (request_id) {
-      await supabase
-        .from('requests')
-        .update({ status: 'RETURNED' })
-        .eq('id', request_id);
-    }
-
-    res.json({ success: true, message: `Item restocked successfully (+${restockQty} units).` });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-app.listen(PORT, () => {
-  console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
-});
-// ----------------- MOBILE SCANNER: LOOKUP ITEM -----------------
-app.get('/api/mobile/item/:code', async (req, res) => {
-  try {
-    const { data: item, error } = await supabase
-      .from('inventory')
-      .select('*')
-      .eq('asset_code', req.params.code.trim())
-      .maybeSingle();
-
-    if (error || !item) {
-      return res.status(404).json({ error: "Item not found in database" });
-    }
-
-    res.json(item);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ----------------- MOBILE SCANNER: DISPATCH & LOG -----------------
-app.post('/api/mobile/dispatch', async (req, res) => {
-  try {
-    const { asset_code, borrower_name, custodian_id, request_id, quantity } = req.body;
-    const releaseQty = parseInt(quantity, 10) || 1;
-
-    if (!asset_code || !borrower_name) {
-      return res.status(400).json({ error: "Missing barcode or borrower name" });
-    }
-
-    // 1. Fetch item from inventory
-    const { data: item, error: fetchErr } = await supabase
+    // Check if asset already exists
+    const { data: existing } = await supabase
       .from('inventory')
       .select('*')
       .eq('asset_code', asset_code.trim())
       .maybeSingle();
 
-    if (fetchErr || !item) {
-      return res.status(404).json({ error: "Item code not registered in inventory" });
+    if (existing) {
+      const nextQty = existing.quantity + parsedQty;
+      const { data, error } = await supabase
+        .from('inventory')
+        .update({
+          quantity: nextQty,
+          status: nextQty > 0 ? "Available" : "Out of Stock"
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ success: true, message: `Restocked ${name}. Total count: ${nextQty}`, id: data.id });
     }
 
-    if (item.quantity < releaseQty) {
-      return res.status(400).json({ error: `Not enough stock. Requested: ${releaseQty}, Available: ${item.quantity}` });
-    }
-
-    const nextQty = item.quantity - releaseQty;
-    const nextStatus = nextQty === 0 ? "Out of Stock" : item.status;
-
-    // 2. Decrement inventory count in Supabase
-    await supabase
+    // Insert brand new item
+    const { data, error } = await supabase
       .from('inventory')
-      .update({ quantity: nextQty, status: nextStatus })
-      .eq('id', item.id);
-
-    // 3. Write record into borrow_logs in Supabase
-    await supabase
-      .from('borrow_logs')
       .insert([{
-        asset_code: asset_code.trim(),
-        borrower_name: borrower_name.trim(),
-        custodian_id: custodian_id || "Mobile-Terminal"
-      }]);
+        name,
+        category,
+        quantity: parsedQty,
+        status: parsedQty > 0 ? "Available" : "Out of Stock",
+        asset_code: asset_code.trim()
+      }])
+      .select()
+      .single();
 
-    // 4. Update the request ticket status to 'DISPATCHED' so it leaves Ready to Pickup
-    if (request_id) {
-      await supabase
-        .from('requests')
-        .update({ status: 'DISPATCHED' })
-        .eq('id', request_id);
-    }
-
-    res.json({
-      success: true,
-      message: `Dispatched ${releaseQty} unit(s) of ${item.name} to ${borrower_name}`,
-      remaining_quantity: nextQty
-    });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, message: `Created and stocked ${name}.`, id: data.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
