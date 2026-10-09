@@ -216,5 +216,9 @@ app.post('/api/mobile/dispatch', (req, res) => {
   res.json({ success: true, message: `Dispatched ${item.name} to ${borrower_name}` });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = // Route to view entire raw database (inventory, requests, borrow logs, users)
+app.get('/api/admin/database', (req, res) => {
+  const db = loadDb();
+  res.json(db);
+}); process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`SmartTrack running on port ${PORT}`));
