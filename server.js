@@ -275,6 +275,63 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+// ----------------- MOBILE: GET APPROVED REQUESTS -----------------
+app.get('/api/mobile/approved-requests', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('requests')
+      .select('*')
+      .eq('status', 'APPROVED')
+      .order('id', { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------- ADMIN: RETURN & RESTOCK ASSET -----------------
+app.post('/api/admin/return-item', async (req, res) => {
+  try {
+    const { request_id, asset_code, quantity } = req.body;
+    const restockQty = parseInt(quantity, 10) || 1;
+
+    // 1. If linked to an asset code, increase inventory stock
+    if (asset_code) {
+      const { data: item, error: fetchErr } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('asset_code', asset_code.trim())
+        .maybeSingle();
+
+      if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+
+      if (item) {
+        const updatedQty = item.quantity + restockQty;
+        await supabase
+          .from('inventory')
+          .update({
+            quantity: updatedQty,
+            status: updatedQty > 0 ? 'Available' : 'Out of Stock'
+          })
+          .eq('id', item.id);
+      }
+    }
+
+    // 2. Mark the requisition ticket as 'RETURNED'
+    if (request_id) {
+      await supabase
+        .from('requests')
+        .update({ status: 'RETURNED' })
+        .eq('id', request_id);
+    }
+
+    res.json({ success: true, message: `Item restocked successfully (+${restockQty} units).` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 app.listen(PORT, () => {
   console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
 });
