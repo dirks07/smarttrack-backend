@@ -192,17 +192,71 @@ app.get('/api/public/inventory', async (req, res) => {
 });
 
 // Admin Restock / Ingest (Upsert)
+// Admin Restock / Ingest (Case-Insensitive Upsert)
 app.post('/api/admin/inventory', async (req, res) => {
   try {
     const { name, category, quantity, asset_code } = req.body;
     const parsedQty = parseInt(quantity, 10) || 1;
+    const cleanCode = (asset_code || '').trim().toUpperCase();
 
-    if (!name || !asset_code) {
+    if (!name || !cleanCode) {
       return res.status(400).json({ error: "Item name and asset code are required" });
     }
 
-    const { data: existing } = await supabase
+    // 1. Look up existing item regardless of case sensitivity
+    const { data: existing, error: findErr } = await supabase
       .from('inventory')
       .select('*')
-      .eq('asset_code', asset_code.trim())
+      .ilike('asset_code', cleanCode)
       .maybeSingle();
+
+    if (findErr) {
+      return res.status(500).json({ error: findErr.message });
+    }
+
+    // 2. If it already exists, UPDATE the quantity (Restock)
+    if (existing) {
+      const nextQty = (parseInt(existing.quantity, 10) || 0) + parsedQty;
+      const { data, error } = await supabase
+        .from('inventory')
+        .update({
+          name: name.trim(),
+          category: category || existing.category,
+          quantity: nextQty,
+          status: nextQty > 0 ? "Available" : "Out of Stock"
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ 
+        success: true, 
+        message: `Restocked ${name} (+${parsedQty} units). Total stock is now ${nextQty}.`, 
+        id: data.id 
+      });
+    }
+
+    // 3. If brand new, INSERT row
+    const { data, error } = await supabase
+      .from('inventory')
+      .insert([{
+        name: name.trim(),
+        category: category || 'Equipment',
+        quantity: parsedQty,
+        status: parsedQty > 0 ? "Available" : "Out of Stock",
+        asset_code: cleanCode
+      }])
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ 
+      success: true, 
+      message: `Registered and stocked new asset: ${name}.`, 
+      id: data.id 
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
