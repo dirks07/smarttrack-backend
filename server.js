@@ -9,6 +9,7 @@ app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'data.json');
 
+// Initial seed database structure
 const initialData = {
   admins: [
     { id: 1, full_name: "Lead Custodian", username: "admin", password: "password123" }
@@ -37,6 +38,9 @@ function loadDb() {
     const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     if (!data.admins) data.admins = initialData.admins;
     if (!data.requesters) data.requesters = initialData.requesters;
+    if (!data.inventory) data.inventory = initialData.inventory;
+    if (!data.requests) data.requests = initialData.requests;
+    if (!data.borrow_logs) data.borrow_logs = initialData.borrow_logs;
     return data;
   } catch (e) {
     return initialData;
@@ -47,10 +51,24 @@ function saveDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// --- ADMIN AUTH ROUTES ---
+// ----------------- HEALTH CHECK ROUTE -----------------
+app.get('/', (req, res) => {
+  res.json({ message: "SmartTrack Core API running smoothly." });
+});
+
+// ----------------- FULL DATABASE ROUTE -----------------
+// Endpoint accessed by the "View Live Database" button
+app.get('/api/admin/database', (req, res) => {
+  const db = loadDb();
+  res.json(db);
+});
+
+// ----------------- ADMIN AUTH ROUTES -----------------
 app.post('/api/admin/signup', (req, res) => {
   const { full_name, username, password } = req.body;
-  if (!full_name || !username || !password) return res.status(400).json({ error: "All fields are required" });
+  if (!full_name || !username || !password) {
+    return res.status(400).json({ error: "All fields are required" });
+  }
 
   const db = loadDb();
   if (db.admins.find(a => a.username.toLowerCase() === username.toLowerCase())) {
@@ -72,7 +90,7 @@ app.post('/api/admin/login', (req, res) => {
   res.json({ success: true, admin: { full_name: admin.full_name, username: admin.username } });
 });
 
-// --- PUBLIC (STUDENT & TEACHER) AUTH ROUTES ---
+// ----------------- PUBLIC (STUDENT & TEACHER) AUTH -----------------
 app.post('/api/public/signup', (req, res) => {
   const { full_name, identifier, role, department, password } = req.body;
   if (!full_name || !identifier || !role || !department || !password) {
@@ -119,16 +137,29 @@ app.post('/api/public/login', (req, res) => {
   });
 });
 
-// --- CORE SYSTEM ROUTES ---
-app.get('/', (req, res) => {
-  res.json({ message: "SmartTrack Core API running smoothly." });
-});
-
+// ----------------- INVENTORY ROUTES -----------------
 app.get('/api/public/inventory', (req, res) => {
   const db = loadDb();
   res.json(db.inventory);
 });
 
+app.post('/api/admin/inventory', (req, res) => {
+  const { name, category, quantity, asset_code } = req.body;
+  const db = loadDb();
+  const newItem = {
+    id: db.inventory.length + 1,
+    name,
+    category,
+    quantity: parseInt(quantity),
+    status: parseInt(quantity) > 0 ? "Available" : "Out of Stock",
+    asset_code
+  };
+  db.inventory.push(newItem);
+  saveDb(db);
+  res.json({ success: true, id: newItem.id });
+});
+
+// ----------------- REQUISITION REQUEST ROUTES -----------------
 app.post('/api/public/requests', (req, res) => {
   const { requester_name, department, item_name, quantity, purpose, role, identifier } = req.body;
   if (!requester_name || !item_name || !quantity) {
@@ -139,11 +170,11 @@ app.post('/api/public/requests', (req, res) => {
     id: db.requests.length + 1,
     requester_name,
     identifier: identifier || 'N/A',
-    role: role || 'Public',
-    department,
+    role: role || 'Requester',
+    department: department || '',
     item_name,
     quantity: parseInt(quantity),
-    purpose,
+    purpose: purpose || '',
     status: 'PENDING',
     created_at: new Date().toISOString()
   };
@@ -170,22 +201,7 @@ app.patch('/api/admin/requests/:id', (req, res) => {
   }
 });
 
-app.post('/api/admin/inventory', (req, res) => {
-  const { name, category, quantity, asset_code } = req.body;
-  const db = loadDb();
-  const newItem = {
-    id: db.inventory.length + 1,
-    name,
-    category,
-    quantity: parseInt(quantity),
-    status: parseInt(quantity) > 0 ? "Available" : "Out of Stock",
-    asset_code
-  };
-  db.inventory.push(newItem);
-  saveDb(db);
-  res.json({ success: true, id: newItem.id });
-});
-
+// ----------------- MOBILE SCANNER & DISPATCH ROUTES -----------------
 app.get('/api/mobile/item/:code', (req, res) => {
   const db = loadDb();
   const item = db.inventory.find(i => i.asset_code === req.params.code);
@@ -216,9 +232,7 @@ app.post('/api/mobile/dispatch', (req, res) => {
   res.json({ success: true, message: `Dispatched ${item.name} to ${borrower_name}` });
 });
 
-const PORT = // Route to view entire raw database (inventory, requests, borrow logs, users)
-app.get('/api/admin/database', (req, res) => {
-  const db = loadDb();
-  res.json(db);
-}); process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`SmartTrack running on port ${PORT}`));
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
+});
