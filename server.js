@@ -278,3 +278,77 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
 });
+// ----------------- MOBILE SCANNER: LOOKUP ITEM -----------------
+app.get('/api/mobile/item/:code', async (req, res) => {
+  try {
+    const { data: item, error } = await supabase
+      .from('inventory')
+      .select('*')
+      .eq('asset_code', req.params.code.trim())
+      .maybeSingle();
+
+    if (error || !item) {
+      return res.status(404).json({ error: "Item not found in database" });
+    }
+
+    res.json(item);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------- MOBILE SCANNER: DISPATCH & LOG -----------------
+app.post('/api/mobile/dispatch', async (req, res) => {
+  try {
+    const { asset_code, borrower_name, custodian_id } = req.body;
+
+    if (!asset_code || !borrower_name) {
+      return res.status(400).json({ error: "Missing barcode or borrower name" });
+    }
+
+    // 1. Fetch current item stock
+    const { data: item, error: fetchErr } = await supabase
+      .from('inventory')
+      .select('*')
+      .eq('asset_code', asset_code.trim())
+      .maybeSingle();
+
+    if (fetchErr || !item) {
+      return res.status(404).json({ error: "Item code not registered" });
+    }
+
+    if (item.quantity <= 0) {
+      return res.status(400).json({ error: "Item is currently out of stock" });
+    }
+
+    const nextQty = item.quantity - 1;
+    const nextStatus = nextQty === 0 ? "Out of Stock" : item.status;
+
+    // 2. Decrement inventory in Supabase
+    await supabase
+      .from('inventory')
+      .update({ quantity: nextQty, status: nextStatus })
+      .eq('id', item.id);
+
+    // 3. Write dispatch record to borrow_logs in Supabase
+    const { data: log, error: logErr } = await supabase
+      .from('borrow_logs')
+      .insert([{
+        asset_code: asset_code.trim(),
+        borrower_name: borrower_name.trim(),
+        custodian_id: custodian_id || "Mobile-Custodian"
+      }])
+      .select()
+      .single();
+
+    if (logErr) return res.status(500).json({ error: logErr.message });
+
+    res.json({
+      success: true,
+      message: `Successfully dispatched ${item.name} to ${borrower_name}`,
+      remaining_quantity: nextQty
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
