@@ -9,8 +9,11 @@ app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'data.json');
 
-// Initial seed data
+// Default seed data with admin user store
 const initialData = {
+  admins: [
+    { id: 1, full_name: "Lead Custodian", username: "admin", password: "password123" }
+  ],
   inventory: [
     { id: 1, name: "Epson Projector EB-X06", category: "Equipment", quantity: 5, status: "Available", asset_code: "CDM-EQ-001" },
     { id: 2, name: "A4 Copy Paper (Box)", category: "Consumable", quantity: 42, status: "In Stock", asset_code: "CDM-CS-101" },
@@ -22,14 +25,15 @@ const initialData = {
   borrow_logs: []
 };
 
-// Load or initialize JSON DB
 function loadDb() {
   if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2));
     return initialData;
   }
   try {
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    if (!data.admins) data.admins = initialData.admins;
+    return data;
   } catch (e) {
     return initialData;
   }
@@ -39,20 +43,48 @@ function saveDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// ---------------- API ROUTES ----------------
+// --- AUTH ROUTES ---
+app.post('/api/admin/signup', (req, res) => {
+  const { full_name, username, password } = req.body;
+  if (!full_name || !username || !password) {
+    return res.status(400).json({ error: "All fields are required" });
+  }
 
-// Root health check
+  const db = loadDb();
+  const exists = db.admins.find(a => a.username.toLowerCase() === username.toLowerCase());
+  if (exists) {
+    return res.status(409).json({ error: "Username already registered" });
+  }
+
+  const newAdmin = { id: db.admins.length + 1, full_name, username, password };
+  db.admins.push(newAdmin);
+  saveDb(db);
+
+  res.json({ success: true, message: "Officer account created successfully", admin: { full_name, username } });
+});
+
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body;
+  const db = loadDb();
+  const admin = db.admins.find(a => a.username.toLowerCase() === username.toLowerCase() && a.password === password);
+
+  if (!admin) {
+    return res.status(401).json({ error: "Invalid username or password" });
+  }
+
+  res.json({ success: true, admin: { full_name: admin.full_name, username: admin.username } });
+});
+
+// --- CORE ROUTES ---
 app.get('/', (req, res) => {
   res.json({ message: "SmartTrack Core API running smoothly." });
 });
 
-// 1. PUBLIC PORTAL: Live inventory catalog
 app.get('/api/public/inventory', (req, res) => {
   const db = loadDb();
   res.json(db.inventory);
 });
 
-// 2. PUBLIC PORTAL: Submit requisition ticket
 app.post('/api/public/requests', (req, res) => {
   const { requester_name, department, item_name, quantity, purpose } = req.body;
   if (!requester_name || !item_name || !quantity) {
@@ -74,13 +106,11 @@ app.post('/api/public/requests', (req, res) => {
   res.json({ success: true, ticket_id: newTicket.id });
 });
 
-// 3. ADMIN PORTAL: Get all pending & approved requests
 app.get('/api/admin/requests', (req, res) => {
   const db = loadDb();
   res.json(db.requests);
 });
 
-// 4. ADMIN PORTAL: Update request ticket status
 app.patch('/api/admin/requests/:id', (req, res) => {
   const { status } = req.body;
   const db = loadDb();
@@ -94,7 +124,6 @@ app.patch('/api/admin/requests/:id', (req, res) => {
   }
 });
 
-// 5. ADMIN PORTAL: Add inventory item
 app.post('/api/admin/inventory', (req, res) => {
   const { name, category, quantity, asset_code } = req.body;
   const db = loadDb();
@@ -111,7 +140,6 @@ app.post('/api/admin/inventory', (req, res) => {
   res.json({ success: true, id: newItem.id });
 });
 
-// 6. MOBILE APP: Quick barcode/asset lookup
 app.get('/api/mobile/item/:code', (req, res) => {
   const db = loadDb();
   const item = db.inventory.find(i => i.asset_code === req.params.code);
@@ -122,7 +150,6 @@ app.get('/api/mobile/item/:code', (req, res) => {
   }
 });
 
-// 7. MOBILE APP: Confirm warehouse dispatch & decrement stock
 app.post('/api/mobile/dispatch', (req, res) => {
   const { asset_code, borrower_name, custodian_id } = req.body;
   const db = loadDb();
