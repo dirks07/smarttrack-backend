@@ -7,22 +7,26 @@ app.use(cors());
 app.use(express.json());
 
 // Supabase Configuration
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://imjdhuczyqaxhifyucbo.supabase.co';
-// You can also paste your secret key directly inside quotes as fallback if Render env vars aren't set:
-const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
+const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://imjdhuczyqaxhifyucbo.supabase.co').trim();
+const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
 
 if (!SUPABASE_KEY) {
-  console.error("CRITICAL: SUPABASE_KEY is missing! Registration will not save to Supabase.");
+  console.error("CRITICAL: SUPABASE_KEY is missing! Supabase queries will fail.");
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false
+  }
+});
 
-// Health check
+// Root Health Check
 app.get('/', (req, res) => {
   res.json({ message: "SmartTrack Core API connected to Supabase PostgreSQL." });
 });
 
-// View all database contents directly
+// Admin Database Diagnostic
 app.get('/api/admin/database', async (req, res) => {
   try {
     const [admins, requesters, inventory, requests, logs] = await Promise.all([
@@ -45,9 +49,9 @@ app.get('/api/admin/database', async (req, res) => {
   }
 });
 
-// ==========================================================
-// ADMIN AUTHENTICATION (Saves to Supabase `admins` table)
-// ==========================================================
+// ==========================================
+// ADMIN AUTHENTICATION
+// ==========================================
 app.post('/api/admin/signup', async (req, res) => {
   try {
     const { full_name, username, password } = req.body;
@@ -55,48 +59,33 @@ app.post('/api/admin/signup', async (req, res) => {
       return res.status(400).json({ error: "All fields are required" });
     }
 
-    // 1. Check if username already exists in Supabase
     const { data: existing, error: checkError } = await supabase
       .from('admins')
       .select('id')
       .ilike('username', username.trim())
       .maybeSingle();
 
-    if (checkError) {
-      console.error("Supabase check error:", checkError);
-      return res.status(500).json({ error: checkError.message });
-    }
+    if (checkError) return res.status(500).json({ error: checkError.message });
+    if (existing) return res.status(409).json({ error: "Username already registered in Supabase" });
 
-    if (existing) {
-      return res.status(409).json({ error: "Username already registered in Supabase" });
-    }
-
-    // 2. Insert new admin directly into Supabase
     const { data: newAdmin, error: insertError } = await supabase
       .from('admins')
-      .insert([
-        {
-          full_name: full_name.trim(),
-          username: username.trim(),
-          password: password
-        }
-      ])
+      .insert([{
+        full_name: full_name.trim(),
+        username: username.trim(),
+        password: password
+      }])
       .select()
       .single();
 
-    if (insertError) {
-      console.error("Supabase insert error:", insertError);
-      return res.status(500).json({ error: insertError.message });
-    }
+    if (insertError) return res.status(500).json({ error: insertError.message });
 
-    console.log("Successfully registered admin to Supabase:", newAdmin);
     return res.json({
       success: true,
       message: "Admin registered successfully in Supabase",
       admin: { full_name: newAdmin.full_name, username: newAdmin.username }
     });
   } catch (err) {
-    console.error("Catch error in signup:", err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -113,9 +102,7 @@ app.post('/api/admin/login', async (req, res) => {
       .eq('password', password)
       .maybeSingle();
 
-    if (error || !admin) {
-      return res.status(401).json({ error: "Invalid username or password" });
-    }
+    if (error || !admin) return res.status(401).json({ error: "Invalid username or password" });
 
     return res.json({
       success: true,
@@ -126,9 +113,9 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-// ==========================================================
-// PUBLIC (STUDENT & TEACHER) AUTH (Saves to `requesters`)
-// ==========================================================
+// ==========================================
+// PUBLIC (STUDENT/FACULTY) AUTHENTICATION
+// ==========================================
 app.post('/api/public/signup', async (req, res) => {
   try {
     const { full_name, identifier, role, department, password } = req.body;
@@ -143,9 +130,7 @@ app.post('/api/public/signup', async (req, res) => {
       .maybeSingle();
 
     if (checkError) return res.status(500).json({ error: checkError.message });
-    if (existing) {
-      return res.status(409).json({ error: `${role === 'Student' ? 'Student Number' : 'Faculty ID'} is already registered` });
-    }
+    if (existing) return res.status(409).json({ error: `${role === 'Student' ? 'Student Number' : 'Faculty ID'} is already registered` });
 
     const { data, error: insertError } = await supabase
       .from('requesters')
@@ -182,9 +167,7 @@ app.post('/api/public/login', async (req, res) => {
       .eq('password', password)
       .maybeSingle();
 
-    if (error || !user) {
-      return res.status(401).json({ error: "Invalid ID number or password" });
-    }
+    if (error || !user) return res.status(401).json({ error: "Invalid ID number or password" });
 
     return res.json({
       success: true,
@@ -195,9 +178,9 @@ app.post('/api/public/login', async (req, res) => {
   }
 });
 
-// ==========================================================
-// INVENTORY & REQUESTS ROUTES
-// ==========================================================
+// ==========================================
+// INVENTORY & RESTOCK ROUTES
+// ==========================================
 app.get('/api/public/inventory', async (req, res) => {
   const { data, error } = await supabase
     .from('inventory')
@@ -208,122 +191,18 @@ app.get('/api/public/inventory', async (req, res) => {
   res.json(data);
 });
 
-app.post('/api/admin/inventory', async (req, res) => {
-  const { name, category, quantity, asset_code } = req.body;
-  const parsedQty = parseInt(quantity, 10);
-
-  const { data, error } = await supabase
-    .from('inventory')
-    .insert([{
-      name,
-      category,
-      quantity: parsedQty,
-      status: parsedQty > 0 ? "Available" : "Out of Stock",
-      asset_code
-    }])
-    .select()
-    .single();
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true, id: data.id });
-});
-
-app.post('/api/public/requests', async (req, res) => {
-  const { requester_name, department, item_name, quantity, purpose, role, identifier } = req.body;
-  if (!requester_name || !item_name || !quantity) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
-
-  const { data, error } = await supabase
-    .from('requests')
-    .insert([{
-      requester_name,
-      identifier: identifier || 'N/A',
-      role: role || 'Requester',
-      department: department || '',
-      item_name,
-      quantity: parseInt(quantity, 10),
-      purpose: purpose || '',
-      status: 'PENDING'
-    }])
-    .select()
-    .single();
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true, ticket_id: data.id });
-});
-
-app.get('/api/admin/requests', async (req, res) => {
-  const { data, error } = await supabase
-    .from('requests')
-    .select('*')
-    .order('id', { ascending: false });
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// Mobile endpoint to cancel/remove an approved ticket if item is unavailable
-app.patch('/api/mobile/requests/:id/cancel', async (req, res) => {
-  try {
-    const { reason } = req.body;
-    const { error } = await supabase
-      .from('requests')
-      .update({ status: 'UNAVAILABLE_CANCELLED' })
-      .eq('id', req.params.id);
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ success: true, message: "Ticket marked unavailable and removed." });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Admin Ingest/Restock: If item exists, increase quantity; otherwise insert
+// Admin Restock / Ingest (Upsert)
 app.post('/api/admin/inventory', async (req, res) => {
   try {
     const { name, category, quantity, asset_code } = req.body;
-    const parsedQty = parseInt(quantity, 10);
+    const parsedQty = parseInt(quantity, 10) || 1;
 
-    // Check if asset already exists
+    if (!name || !asset_code) {
+      return res.status(400).json({ error: "Item name and asset code are required" });
+    }
+
     const { data: existing } = await supabase
       .from('inventory')
       .select('*')
       .eq('asset_code', asset_code.trim())
       .maybeSingle();
-
-    if (existing) {
-      const nextQty = existing.quantity + parsedQty;
-      const { data, error } = await supabase
-        .from('inventory')
-        .update({
-          quantity: nextQty,
-          status: nextQty > 0 ? "Available" : "Out of Stock"
-        })
-        .eq('id', existing.id)
-        .select()
-        .single();
-
-      if (error) return res.status(500).json({ error: error.message });
-      return res.json({ success: true, message: `Restocked ${name}. Total count: ${nextQty}`, id: data.id });
-    }
-
-    // Insert brand new item
-    const { data, error } = await supabase
-      .from('inventory')
-      .insert([{
-        name,
-        category,
-        quantity: parsedQty,
-        status: parsedQty > 0 ? "Available" : "Out of Stock",
-        asset_code: asset_code.trim()
-      }])
-      .select()
-      .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ success: true, message: `Created and stocked ${name}.`, id: data.id });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
