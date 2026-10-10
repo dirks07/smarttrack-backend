@@ -34,28 +34,34 @@ const supabase = createClient(rawUrl, rawKey);
 // Cache for pending borrower activations (Token -> User Data)
 const pendingTokens = new Map();
 
-// Helper to send email via EmailJS HTTPS REST API (Strict Mode / Private Key Enabled)
+// Helper to send email via EmailJS HTTPS REST API
 async function sendVerificationViaEmailJS(toEmail, fullName, verificationUrl) {
-  const serviceId = (process.env.EMAILJS_SERVICE_ID || '').trim();
-  const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').trim();
-  const publicKey = (process.env.EMAILJS_PUBLIC_KEY || '').trim();
-  const privateKey = (process.env.EMAILJS_PRIVATE_KEY || '').trim();
+  const serviceId = (process.env.EMAILJS_SERVICE_ID || '').replace(/^["']|["']$/g, '').trim();
+  const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').replace(/^["']|["']$/g, '').trim();
+  const publicKey = (process.env.EMAILJS_PUBLIC_KEY || '').replace(/^["']|["']$/g, '').trim();
+  const privateKey = (process.env.EMAILJS_PRIVATE_KEY || '').replace(/^["']|["']$/g, '').trim();
 
   if (!serviceId || !templateId || !publicKey) {
-    throw new Error('EmailJS environment keys missing on Render dashboard.');
+    throw new Error(`Missing EmailJS keys in Render: serviceId=${!!serviceId}, templateId=${!!templateId}, publicKey=${!!publicKey}`);
   }
 
   const payload = {
     service_id: serviceId,
     template_id: templateId,
     user_id: publicKey,
-    accessToken: privateKey, // Required for non-browser strict mode
     template_params: {
       to_email: toEmail,
       to_name: fullName,
       verification_url: verificationUrl
     }
   };
+
+  // Only attach accessToken if it has a valid non-empty string
+  if (privateKey) {
+    payload.accessToken = privateKey;
+  }
+
+  console.log(`[EmailJS] Dispatching to ${toEmail} using service=${serviceId}, template=${templateId}`);
 
   const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
     method: 'POST',
@@ -65,6 +71,7 @@ async function sendVerificationViaEmailJS(toEmail, fullName, verificationUrl) {
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error('[EmailJS Failure]:', errorText);
     throw new Error(`EmailJS Error: ${errorText}`);
   }
 }
@@ -93,7 +100,6 @@ app.post('/api/public/register', async (req, res) => {
       return res.status(400).json({ error: 'All registration fields are required.' });
     }
 
-    // Check if account already exists
     const { data: existingUser, error: checkError } = await supabase
       .from('borrowers')
       .select('id, identifier, email')
@@ -123,7 +129,6 @@ app.post('/api/public/register', async (req, res) => {
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/public/verify-email?token=${token}`;
 
-    // Send over standard HTTPS Port 443 with accessToken authentication
     await sendVerificationViaEmailJS(email, full_name, verificationUrl);
     console.log(`✓ Verification email sent to ${email}`);
 
@@ -427,6 +432,9 @@ app.get('/api/public/my-requests', async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------
+// 5. ADMIN PORTAL ENDPOINTS
+// -----------------------------------------------------------------
 app.patch('/api/admin/requests/:id', async (req, res) => {
   try {
     const { id } = req.params;
