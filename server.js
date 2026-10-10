@@ -29,11 +29,11 @@ const rawKey = (
 
 const supabase = createClient(rawUrl, rawKey);
 
-// In-memory token maps for 15-minute activation lifespan
+// In-memory token stores for verification links (15 min lifespan)
 const pendingBorrowerTokens = new Map();
 const pendingAdminTokens = new Map();
 
-// Helper to send emails via EmailJS HTTPS REST API
+// Universal EmailJS HTTPS REST Dispatcher
 async function sendVerificationEmail({ toEmail, fullName, verificationUrl, portalType }) {
   const serviceId = (process.env.EMAILJS_SERVICE_ID || '').replace(/^["']|["']$/g, '').trim();
   const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').replace(/^["']|["']$/g, '').trim();
@@ -82,7 +82,7 @@ app.get('/health', (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 3. MOBILE APP BORROWER ENDPOINTS
+// 3. BORROWER FLOW (Mobile App)
 // -----------------------------------------------------------------
 app.post('/api/public/register', async (req, res) => {
   try {
@@ -103,12 +103,22 @@ app.post('/api/public/register', async (req, res) => {
 
     const token = 'b_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     pendingBorrowerTokens.set(token, {
-      full_name, identifier, email, role: role || 'Student', department: department || 'BSIT', password,
+      full_name,
+      identifier,
+      email,
+      role: role || 'Student',
+      department: department || 'BSIT',
+      password,
       expiresAt: Date.now() + 15 * 60 * 1000
     });
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/public/verify-email?token=${token}`;
-    await sendVerificationEmail({ toEmail: email, fullName: full_name, verificationUrl, portalType: 'Student Borrower' });
+    await sendVerificationEmail({
+      toEmail: email,
+      fullName: full_name,
+      verificationUrl,
+      portalType: 'Student Borrower'
+    });
 
     res.json({ success: true, message: `Verification email sent to ${email}.` });
   } catch (error) {
@@ -182,7 +192,7 @@ app.post('/api/public/login', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 4. DESKTOP ADMIN WORKSTATION ENDPOINTS
+// 4. ADMIN WORKSTATION FLOW (Desktop App)
 // -----------------------------------------------------------------
 app.post('/api/admin/register', async (req, res) => {
   try {
@@ -203,12 +213,22 @@ app.post('/api/admin/register', async (req, res) => {
 
     const token = 'a_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     pendingAdminTokens.set(token, {
-      full_name, identifier, email, role: role || 'Admin', department: department || 'Staff', password,
+      full_name,
+      identifier,
+      email,
+      role: role || 'Admin',
+      department: department || 'Staff',
+      password,
       expiresAt: Date.now() + 15 * 60 * 1000
     });
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/admin/verify-email?token=${token}`;
-    await sendVerificationEmail({ toEmail: email, fullName: full_name, verificationUrl, portalType: 'Staff Administrator' });
+    await sendVerificationEmail({
+      toEmail: email,
+      fullName: full_name,
+      verificationUrl,
+      portalType: 'Staff Administrator'
+    });
 
     res.json({ success: true, message: `Admin activation link sent to ${email}.` });
   } catch (error) {
@@ -230,9 +250,11 @@ app.get('/api/admin/verify-email', async (req, res) => {
       return res.status(400).send(`<h2>Token Expired</h2><p>The 15-minute verification window has passed.</p>`);
     }
 
+    // Supports both 'identifier' and 'username' schema constraints
     const { error: insertError } = await supabase.from('admins').insert([{
       full_name: pending.full_name,
       identifier: pending.identifier,
+      username: pending.identifier,
       email: pending.email,
       role: pending.role,
       department: pending.department,
@@ -267,10 +289,12 @@ app.get('/api/admin/verify-email', async (req, res) => {
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { identifier, password } = req.body;
+
+    // Checks identifier or legacy username
     const { data: admin, error } = await supabase
       .from('admins')
       .select('*')
-      .eq('identifier', identifier)
+      .or(`identifier.eq.${identifier},username.eq.${identifier}`)
       .eq('password', password)
       .maybeSingle();
 
@@ -293,8 +317,16 @@ app.get('/api/public/inventory', async (req, res) => {
 app.post('/api/public/requests', async (req, res) => {
   const { item_id, item_name, quantity, purpose, requester_name, identifier, role, department } = req.body;
   const { data, error } = await supabase.from('requests').insert([{
-    item_id, item_name, quantity: parseInt(quantity, 10), purpose, requester_name, identifier,
-    role: role || 'Student', department: department || 'BSIT', status: 'PENDING', created_at: new Date().toISOString()
+    item_id,
+    item_name,
+    quantity: parseInt(quantity, 10),
+    purpose,
+    requester_name,
+    identifier,
+    role: role || 'Student',
+    department: department || 'BSIT',
+    status: 'PENDING',
+    created_at: new Date().toISOString()
   }]).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
