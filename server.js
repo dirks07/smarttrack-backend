@@ -29,11 +29,11 @@ const rawKey = (
 
 const supabase = createClient(rawUrl, rawKey);
 
-// In-memory token stores for verification links (15 min lifespan)
+// In-memory token maps for 15-minute activation lifespan
 const pendingBorrowerTokens = new Map();
 const pendingAdminTokens = new Map();
 
-// Universal EmailJS HTTPS REST Dispatcher
+// Helper to send emails via EmailJS HTTPS REST API
 async function sendVerificationEmail({ toEmail, fullName, verificationUrl, portalType }) {
   const serviceId = (process.env.EMAILJS_SERVICE_ID || '').replace(/^["']|["']$/g, '').trim();
   const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').replace(/^["']|["']$/g, '').trim();
@@ -41,7 +41,7 @@ async function sendVerificationEmail({ toEmail, fullName, verificationUrl, porta
   const privateKey = (process.env.EMAILJS_PRIVATE_KEY || '').replace(/^["']|["']$/g, '').trim();
 
   if (!serviceId || !templateId || !publicKey) {
-    throw new Error('EmailJS configuration missing on Render.');
+    throw new Error('EmailJS keys are missing on Render dashboard environment.');
   }
 
   const payload = {
@@ -59,6 +59,8 @@ async function sendVerificationEmail({ toEmail, fullName, verificationUrl, porta
     payload.accessToken = privateKey;
   }
 
+  console.log(`[EmailJS] Dispatching to ${toEmail} for ${portalType}`);
+
   const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -67,6 +69,7 @@ async function sendVerificationEmail({ toEmail, fullName, verificationUrl, porta
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error('[EmailJS Failure]:', errorText);
     throw new Error(`EmailJS Error: ${errorText}`);
   }
 }
@@ -79,7 +82,7 @@ app.get('/health', (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 3. BORROWER FLOW (Mobile App)
+// 3. MOBILE APP BORROWER ENDPOINTS
 // -----------------------------------------------------------------
 app.post('/api/public/register', async (req, res) => {
   try {
@@ -95,7 +98,7 @@ app.post('/api/public/register', async (req, res) => {
       .maybeSingle();
 
     if (existingUser) {
-      return res.status(400).json({ error: 'Account with this ID or Email already exists.' });
+      return res.status(400).json({ error: 'A borrower account with this ID or Email already exists.' });
     }
 
     const token = 'b_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -109,6 +112,7 @@ app.post('/api/public/register', async (req, res) => {
 
     res.json({ success: true, message: `Verification email sent to ${email}.` });
   } catch (error) {
+    console.error('Borrower registration error:', error);
     res.status(500).json({ error: error.message || 'Borrower registration failed.' });
   }
 });
@@ -117,13 +121,13 @@ app.get('/api/public/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
     if (!token || !pendingBorrowerTokens.has(token)) {
-      return res.status(400).send(`<h2>Link Expired or Invalid</h2><p>Please register again.</p>`);
+      return res.status(400).send(`<h2>Link Expired or Invalid</h2><p>Please register again from the mobile app.</p>`);
     }
 
     const pending = pendingBorrowerTokens.get(token);
     if (Date.now() > pending.expiresAt) {
       pendingBorrowerTokens.delete(token);
-      return res.status(400).send(`<h2>Token Expired</h2><p>Please re-register.</p>`);
+      return res.status(400).send(`<h2>Token Expired</h2><p>The 15-minute verification window has passed.</p>`);
     }
 
     const { error: insertError } = await supabase.from('borrowers').insert([{
@@ -140,12 +144,20 @@ app.get('/api/public/verify-email', async (req, res) => {
     pendingBorrowerTokens.delete(token);
 
     res.send(`
-      <body style="font-family:sans-serif;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
-        <div style="background:#1e293b;padding:32px;border-radius:16px;text-align:center;">
-          <h2 style="color:#10b981;">Borrower Account Activated!</h2>
-          <p>Welcome, ${pending.full_name}. You can now log into the CDM SmartTrack Mobile App.</p>
+      <!DOCTYPE html>
+      <html>
+      <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Account Activated</title></head>
+      <body style="font-family: Arial, sans-serif; background-color: #090d16; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
+        <div style="background-color: #111827; border: 1px solid #1f293d; border-radius: 20px; padding: 36px; max-width: 440px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6);">
+          <div style="font-size: 48px; color: #10b981; margin-bottom: 12px;">✓</div>
+          <h2 style="color: #10b981; margin: 0 0 10px 0;">Borrower Activated!</h2>
+          <p style="color: #cbd5e1; font-size: 15px; margin-bottom: 20px;">Welcome, <strong>${pending.full_name}</strong>. Your account has been verified.</p>
+          <div style="background-color: #1e293b; padding: 12px; border-radius: 8px; border: 1px dashed #10b981; font-size: 13px; color: #38bdf8;">
+            You can now open the CDM SmartTrack mobile app and log in.
+          </div>
         </div>
       </body>
+      </html>
     `);
   } catch (error) {
     res.status(500).send(`Activation failed: ${error.message}`);
@@ -170,7 +182,7 @@ app.post('/api/public/login', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 4. ADMIN FLOW (Desktop Staff Application)
+// 4. DESKTOP ADMIN WORKSTATION ENDPOINTS
 // -----------------------------------------------------------------
 app.post('/api/admin/register', async (req, res) => {
   try {
@@ -186,7 +198,7 @@ app.post('/api/admin/register', async (req, res) => {
       .maybeSingle();
 
     if (existingAdmin) {
-      return res.status(400).json({ error: 'Admin account with this ID or Email already exists.' });
+      return res.status(400).json({ error: 'An admin account with this Staff ID or Gmail already exists.' });
     }
 
     const token = 'a_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -200,6 +212,7 @@ app.post('/api/admin/register', async (req, res) => {
 
     res.json({ success: true, message: `Admin activation link sent to ${email}.` });
   } catch (error) {
+    console.error('Admin registration error:', error);
     res.status(500).json({ error: error.message || 'Admin registration failed.' });
   }
 });
@@ -208,13 +221,13 @@ app.get('/api/admin/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
     if (!token || !pendingAdminTokens.has(token)) {
-      return res.status(400).send(`<h2>Link Expired or Invalid</h2><p>Please register again.</p>`);
+      return res.status(400).send(`<h2>Link Expired or Invalid</h2><p>Please re-register from the desktop portal.</p>`);
     }
 
     const pending = pendingAdminTokens.get(token);
     if (Date.now() > pending.expiresAt) {
       pendingAdminTokens.delete(token);
-      return res.status(400).send(`<h2>Token Expired</h2><p>Please re-register.</p>`);
+      return res.status(400).send(`<h2>Token Expired</h2><p>The 15-minute verification window has passed.</p>`);
     }
 
     const { error: insertError } = await supabase.from('admins').insert([{
@@ -231,15 +244,23 @@ app.get('/api/admin/verify-email', async (req, res) => {
     pendingAdminTokens.delete(token);
 
     res.send(`
-      <body style="font-family:sans-serif;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
-        <div style="background:#1e293b;padding:32px;border-radius:16px;text-align:center;">
-          <h2 style="color:#38bdf8;">Administrator Account Activated!</h2>
-          <p>Welcome, ${pending.full_name}. You can now log into the CDM SmartTrack Desktop Dashboard.</p>
+      <!DOCTYPE html>
+      <html>
+      <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Admin Activated</title></head>
+      <body style="font-family: Arial, sans-serif; background-color: #090d16; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
+        <div style="background-color: #111827; border: 1px solid #1f293d; border-radius: 20px; padding: 36px; max-width: 440px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6);">
+          <div style="font-size: 48px; color: #38bdf8; margin-bottom: 12px;">🛡️</div>
+          <h2 style="color: #38bdf8; margin: 0 0 10px 0;">Administrator Activated!</h2>
+          <p style="color: #cbd5e1; font-size: 15px; margin-bottom: 20px;">Welcome, <strong>${pending.full_name}</strong>. Your staff credentials are ready.</p>
+          <div style="background-color: #1e293b; padding: 12px; border-radius: 8px; border: 1px dashed #38bdf8; font-size: 13px; color: #67e8f9;">
+            Return to the CDM SmartTrack Desktop Application to sign in.
+          </div>
         </div>
       </body>
+      </html>
     `);
   } catch (error) {
-    res.status(500).send(`Activation failed: ${error.message}`);
+    res.status(500).send(`Admin activation failed: ${error.message}`);
   }
 });
 
@@ -287,7 +308,6 @@ app.get('/api/public/my-requests', async (req, res) => {
   res.json(data || []);
 });
 
-// Admin view all requests
 app.get('/api/admin/all-requests', async (req, res) => {
   const { data, error } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
@@ -302,4 +322,4 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
   res.json({ success: true, ticket: data });
 });
 
-app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
+app.listen(PORT, () => console.log(`SmartTrack backend running on port ${PORT}`));
