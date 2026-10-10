@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -32,42 +31,73 @@ const rawKey = (
 
 const supabase = createClient(rawUrl, rawKey);
 
-// -----------------------------------------------------------------
-// 2. NODEMAILER TRANSPORTER (PORT 587 - RENDER COMPATIBLE)
-// -----------------------------------------------------------------
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // Must be false for port 587 (uses STARTTLS)
-  requireTLS: true,
-  auth: {
-    user: (process.env.EMAIL_USER || '').trim(),
-    pass: (process.env.EMAIL_PASS || '').trim()
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
-
 // Cache for pending borrower activations (Token -> User Data)
 const pendingTokens = new Map();
 
+// Helper to send email via Resend HTTPS REST API (Port 443 - Never Blocked)
+async function sendActivationEmail(toEmail, fullName, verificationUrl) {
+  const apiKey = (process.env.RESEND_API_KEY || '').trim();
+  
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY is not set in Render environment variables.');
+  }
+
+  const htmlContent = `
+    <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 28px; border-radius: 12px; max-width: 520px; margin: auto; text-align: center;">
+      <h2 style="color: #10b981; margin-bottom: 4px;">CDM SMARTTRACK</h2>
+      <p style="color: #94a3b8; font-size: 13px; margin-top: 0;">Colegio de Montalban Borrower Portal</p>
+      <hr style="border: none; border-top: 1px solid #334155; margin: 20px 0;" />
+      <p style="font-size: 15px; color: #e2e8f0; text-align: left;">Hello <strong>${fullName}</strong>,</p>
+      <p style="font-size: 14px; color: #cbd5e1; text-align: left; line-height: 1.5;">
+        Thank you for registering. Tap the button below to confirm your email and activate your borrower account:
+      </p>
+      <div style="margin: 28px 0;">
+        <a href="${verificationUrl}" style="background-color: #10b981; color: #042f2e; padding: 14px 28px; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px; display: inline-block;">
+          Activate My Account
+        </a>
+      </div>
+      <p style="font-size: 12px; color: #64748b;">This link is valid for 15 minutes. If you did not create this account, please ignore this email.</p>
+    </div>
+  `;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: 'CDM SmartTrack <onboarding@resend.dev>',
+      to: [toEmail],
+      subject: 'Verify your CDM SmartTrack Account',
+      html: htmlContent
+    })
+  });
+
+  const resData = await response.json();
+  if (!response.ok) {
+    throw new Error(resData.message || JSON.stringify(resData));
+  }
+  return resData;
+}
+
 // -----------------------------------------------------------------
-// 3. HEALTH CHECK & KEEP-ALIVE
+// 2. HEALTH CHECK & KEEP-ALIVE
 // -----------------------------------------------------------------
 app.get('/health', (req, res) => {
   res.json({
     status: 'online',
     timestamp: new Date().toISOString(),
-    supabase_configured: !!rawUrl && !!rawKey
+    supabase_configured: !!rawUrl && !!rawKey,
+    resend_configured: !!process.env.RESEND_API_KEY
   });
 });
 
 // -----------------------------------------------------------------
-// 4. BORROWER AUTHENTICATION & ONE-CLICK EMAIL ACTIVATION
+// 3. BORROWER AUTHENTICATION & ONE-CLICK EMAIL ACTIVATION
 // -----------------------------------------------------------------
 
-// A. Step 1: Submit Registration -> Send Verification Link to Gmail
+// A. Step 1: Submit Registration -> Send Verification Link
 app.post('/api/public/register', async (req, res) => {
   try {
     const { full_name, identifier, email, role, department, password } = req.body;
@@ -76,7 +106,6 @@ app.post('/api/public/register', async (req, res) => {
       return res.status(400).json({ error: 'All registration fields are required.' });
     }
 
-    // Check if account already exists in Supabase
     const { data: existingUser, error: checkError } = await supabase
       .from('borrowers')
       .select('id, identifier, email')
@@ -108,44 +137,21 @@ app.post('/api/public/register', async (req, res) => {
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/public/verify-email?token=${token}`;
 
-    const mailOptions = {
-      from: `"CDM SmartTrack System" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: 'Verify your CDM SmartTrack Account',
-      html: `
-        <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 28px; border-radius: 12px; max-width: 520px; margin: auto; text-align: center;">
-          <h2 style="color: #10b981; margin-bottom: 4px;">CDM SMARTTRACK</h2>
-          <p style="color: #94a3b8; font-size: 13px; margin-top: 0;">Colegio de Montalban Borrower Portal</p>
-          <hr style="border: none; border-top: 1px solid #334155; margin: 20px 0;" />
-          <p style="font-size: 15px; color: #e2e8f0; text-align: left;">Hello <strong>${full_name}</strong>,</p>
-          <p style="font-size: 14px; color: #cbd5e1; text-align: left; line-height: 1.5;">
-            Thank you for registering. Tap the button below to confirm your email and activate your borrower account:
-          </p>
-          <div style="margin: 28px 0;">
-            <a href="${verificationUrl}" style="background-color: #10b981; color: #042f2e; padding: 14px 28px; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px; display: inline-block;">
-              Activate My Account
-            </a>
-          </div>
-          <p style="font-size: 12px; color: #64748b;">This link is valid for 15 minutes. If you did not create this account, please ignore this email.</p>
-        </div>
-      `
-    };
-
-    // Send email using port 587
-    await transporter.sendMail(mailOptions);
-    console.log(`✓ Verification email sent successfully to ${email}`);
+    // Dispatches instantly via Resend REST API (over port 443 HTTPS)
+    await sendActivationEmail(email, full_name, verificationUrl);
+    console.log(`✓ Verification email delivered to ${email}`);
 
     return res.json({
       success: true,
       message: `A verification link has been sent to ${email}.`
     });
   } catch (error) {
-    console.error('SMTP / Registration failure:', error);
-    return res.status(500).json({ error: 'Email delivery failed: ' + (error.message || 'Check server logs.') });
+    console.error('Registration dispatch failure:', error);
+    return res.status(500).json({ error: 'Email delivery failed: ' + (error.message || 'Check logs.') });
   }
 });
 
-// B. Step 2: User Clicks Button in Gmail -> Account activated in Supabase
+// B. Step 2: User Clicks Button in Email -> Activates Supabase Account
 app.get('/api/public/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
@@ -213,10 +219,10 @@ app.get('/api/public/verify-email', async (req, res) => {
       `);
     }
 
-    // Clean up used token
+    // Remove token
     pendingTokens.delete(token);
 
-    // Confirmation webpage
+    // Render response page
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -287,7 +293,7 @@ app.post('/api/public/login', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 5. INVENTORY CATALOG & REQUISITIONS
+// 4. INVENTORY CATALOG & REQUISITIONS
 // -----------------------------------------------------------------
 
 // Fetch inventory catalog
@@ -366,7 +372,7 @@ app.get('/api/public/my-requests', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 6. ADMIN PORTAL ENDPOINTS
+// 5. ADMIN PORTAL ENDPOINTS
 // -----------------------------------------------------------------
 
 // Update ticket status (APPROVE, REJECT, CLAIM)
@@ -394,7 +400,6 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
   }
 });
 
-// Start Express server
 app.listen(PORT, () => {
   console.log(`SmartTrack Backend server listening on port ${PORT}`);
 });
