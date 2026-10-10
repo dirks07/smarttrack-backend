@@ -445,7 +445,155 @@ const transporter = nodemailer.createTransport({
     pass: process.env.GMAIL_APP_PASS   // 16-character Google App Password
   }
 });
+const nodemailer = require('nodemailer');
 
+// 1. Configure the automated Gmail mailer
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,       // Your designated Gmail address
+    pass: process.env.GMAIL_APP_PASS    // 16-character Google App Password
+  }
+});
+
+// 2. Automated Registration + Instant OTP Dispatch Route
+app.post('/api/public/register', async (req, res) => {
+  const { full_name, identifier, email, role, department, password } = req.body;
+
+  if (!full_name || !identifier || !email || !password) {
+    return res.status(400).json({ error: 'Please provide all required registration fields.' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanId = identifier.trim().toUpperCase();
+
+  // Automatically generate a random 6-digit numeric verification code
+  const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+  // Valid for 10 minutes from now
+  const expiryTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+  try {
+    // Check if user already exists
+    const { data: existingUser } = await supabase
+      .from('requesters')
+      .select('id, is_verified')
+      .or(`identifier.eq.${cleanId},email.eq.${cleanEmail}`)
+      .maybeSingle();
+
+    if (existingUser && existingUser.is_verified) {
+      return res.status(400).json({ error: 'An account with this ID or Gmail address is already verified and active.' });
+    }
+
+    if (existingUser && !existingUser.is_verified) {
+      // Re-registering / requesting new code: overwrite code and details
+      const { error: updateErr } = await supabase
+        .from('requesters')
+        .update({
+          full_name,
+          role: role || 'Student',
+          department: department || 'BSIT',
+          password,
+          otp_code: generatedOtp,
+          otp_expires_at: expiryTime
+        })
+        .eq('id', existingUser.id);
+
+      if (updateErr) throw updateErr;
+    } else {
+      // Brand new registration: insert record with pending verification status
+      const { error: insertErr } = await supabase
+        .from('requesters')
+        .insert([{
+          full_name,
+          identifier: cleanId,
+          email: cleanEmail,
+          role: role || 'Student',
+          department: department || 'BSIT',
+          password,
+          otp_code: generatedOtp,
+          otp_expires_at: expiryTime,
+          is_verified: false
+        }]);
+
+      if (insertErr) throw insertErr;
+    }
+
+    // AUTOMATICALLY SEND THE CODE TO THE GMAIL ADDRESS
+    const mailOptions = {
+      from: `"CDM SmartTrack Security" <${process.env.GMAIL_USER}>`,
+      to: cleanEmail,
+      subject: `Your CDM SmartTrack Verification Code: ${generatedOtp}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; background-color: #0b1120; color: #f8fafc; padding: 24px; border-radius: 12px; max-width: 500px; margin: auto;">
+          <h2 style="color: #10b981; margin-bottom: 4px;">Colegio de Montalban</h2>
+          <p style="font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-top: 0; letter-spacing: 1px;">SmartTrack Borrower Registration</p>
+          <hr style="border: 0; border-top: 1px solid #334155; margin: 16px 0;" />
+          <p style="font-size: 14px; color: #cbd5e1;">Hello <strong>${full_name}</strong>,</p>
+          <p style="font-size: 14px; color: #cbd5e1;">Use the authentication code below to activate your account:</p>
+          
+          <div style="background-color: #1e293b; border: 1px solid #38bdf8; border-radius: 8px; padding: 18px; text-align: center; margin: 24px 0;">
+            <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #38bdf8;">${generatedOtp}</span>
+          </div>
+
+          <p style="font-size: 12px; color: #94a3b8;">This code will automatically expire in <strong>10 minutes</strong>.</p>
+          <p style="font-size: 11px; color: #64748b; margin-top: 24px;">If you did not request this registration, please disregard this email.</p>
+        </div>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.status(200).json({ 
+      success: true, 
+      message: `Verification code automatically sent to ${cleanEmail}.` 
+    });
+
+  } catch (error) {
+    console.error('Email dispatch error:', error);
+    return res.status(500).json({ 
+      error: 'Failed to send automatic verification email: ' + error.message 
+    });
+  }
+});
+
+// 3. Endpoint to Verify the Code
+app.post('/api/public/verify-otp', async (req, res) => {
+  const { identifier, email, otp } = req.body;
+
+  try {
+    const { data: user, error: findErr } = await supabase
+      .from('requesters')
+      .select('*')
+      .or(`identifier.eq.${identifier.trim().toUpperCase()},email.eq.${email.trim().toLowerCase()}`)
+      .single();
+
+    if (findErr || !user) {
+      return res.status(404).json({ error: 'No matching account registration found.' });
+    }
+
+    if (user.otp_code !== otp.trim()) {
+      return res.status(400).json({ error: 'Invalid verification code. Please check and try again.' });
+    }
+
+    if (new Date() > new Date(user.otp_expires_at)) {
+      return res.status(400).json({ error: 'This verification code has expired. Please register again to get a fresh code.' });
+    }
+
+    // Mark as verified and remove one-time code
+    await supabase
+      .from('requesters')
+      .update({ is_verified: true, otp_code: null, otp_expires_at: null })
+      .eq('id', user.id);
+
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Account verified successfully! You can now log in.' 
+    });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 // 1. Borrower Registration - Saves Pending Account & Sends OTP via Gmail
 app.post('/api/public/register', async (req, res) => {
   const { full_name, identifier, email, role, department, password } = req.body;
