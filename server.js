@@ -435,77 +435,123 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// 1. Send OTP / Verification Code to Gmail
-app.post('/api/auth/send-otp', async (req, res) => {
-  const { email, roleType } = req.body; // roleType: 'admin' or 'requester'
-  if (!email) return res.status(400).json({ error: 'Email is required.' });
+const nodemailer = require('nodemailer');
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 mins
-
-  const table = roleType === 'admin' ? 'admins' : 'requesters';
-  await supabase.from(table).update({ otp_code: otp, otp_expires_at: expiresAt }).eq('email', email.trim());
-
-  try {
-    await transporter.sendMail({
-      from: '"CDM SmartTrack Security" <no-reply@cdm.edu.ph>',
-      to: email,
-      subject: 'CDM SmartTrack Verification Code',
-      html: `<h3>Your Verification Code</h3><p>Use code <b>${otp}</b> to verify your access. Valid for 10 minutes.</p>`
-    });
-    res.json({ message: 'Verification code sent to your Gmail.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to send email: ' + err.message });
+// Configure Gmail Transporter (Use your Google App Password)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,       // e.g. 'cdm.smarttrack.notifier@gmail.com'
+    pass: process.env.GMAIL_APP_PASS   // 16-character Google App Password
   }
 });
 
-// 2. Return Item & Condition Assessment (Used by Desktop Dispatcher)
-app.post('/api/dispatcher/return', async (req, res) => {
-  const { log_id, item_condition, remarks, custodian_id } = req.body;
+// 1. Borrower Registration - Saves Pending Account & Sends OTP via Gmail
+app.post('/api/public/register', async (req, res) => {
+  const { full_name, identifier, email, role, department, password } = req.body;
+
+  if (!full_name || !identifier || !email || !password) {
+    return res.status(400).json({ error: 'All registration fields are required.' });
+  }
+
+  // Generate 6-digit numeric OTP and 10-minute expiry
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
   try {
-    const { data: log, error: fetchErr } = await supabase.from('borrow_logs').select('*').eq('id', log_id).single();
-    if (fetchErr || !log) return res.status(404).json({ error: 'Log entry not found.' });
+    // Check if ID or Email already exists
+    const { data: existingUser } = await supabase
+      .from('requesters')
+      .select('id, is_verified')
+      .or(`identifier.eq.${identifier},email.eq.${email.trim().toLowerCase()}`)
+      .maybeSingle();
 
-    // Mark as RETURNED
-    const { error: updateErr } = await supabase.from('borrow_logs').update({
-      status: 'RETURNED',
-      returned_at: new Date().toISOString(),
-      item_condition: item_condition || 'Good',
-      remarks: remarks || 'Returned on schedule',
-      custodian_id: custodian_id || 'Desktop-Dispatcher'
-    }).eq('id', log_id);
-
-    if (updateErr) throw updateErr;
-
-    // Increment inventory quantity back
-    const { data: inv } = await supabase.from('inventory').select('quantity').eq('asset_code', log.asset_code).single();
-    if (inv) {
-      await supabase.from('inventory').update({ quantity: inv.quantity + (log.quantity || 1) }).eq('asset_code', log.asset_code);
+    if (existingUser && existingUser.is_verified) {
+      return res.status(400).json({ error: 'An account with this ID or Email is already registered.' });
     }
 
-    res.json({ message: `Asset ${log.asset_code} successfully returned and restocked.` });
+    if (existingUser && !existingUser.is_verified) {
+      // Update pending record with fresh OTP
+      await supabase.from('requesters').update({
+        full_name,
+        role: role || 'Student',
+        department: department || 'BSIT',
+        password,
+        otp_code: otp,
+        otp_expires_at: expiresAt
+      }).eq('id', existingUser.id);
+    } else {
+      // Insert new unverified record
+      const { error: insertErr } = await supabase.from('requesters').insert([{
+        full_name,
+        identifier: identifier.trim().toUpperCase(),
+        email: email.trim().toLowerCase(),
+        role: role || 'Student',
+        department: department || 'BSIT',
+        password,
+        otp_code: otp,
+        otp_expires_at: expiresAt,
+        is_verified: false
+      }]);
+      if (insertErr) throw insertErr;
+    }
+
+    // Send the authentication code to Gmail
+    await transporter.sendMail({
+      from: '"CDM SmartTrack Verification" <no-reply@cdm.edu.ph>',
+      to: email.trim().toLowerCase(),
+      subject: 'CDM SmartTrack Registration Code',
+      html: `
+        <div style="font-family: sans-serif; background-color: #0b1120; color: #f8fafc; padding: 24px; border-radius: 12px; max-width: 480px;">
+          <h2 style="color: #10b981; margin-top: 0;">Colegio de Montalban</h2>
+          <p style="font-size: 14px; color: #94a3b8;">Use the authentication code below to complete your borrower registration:</p>
+          <div style="background-color: #1e293b; padding: 16px; border-radius: 8px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #38bdf8;">${otp}</span>
+          </div>
+          <p style="font-size: 12px; color: #64748b;">This code will expire in 10 minutes. If you did not make this request, disregard this email.</p>
+        </div>
+      `
+    });
+
+    res.json({ message: 'Verification code sent to your Gmail.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Registration/OTP Error:', err);
+    res.status(500).json({ error: 'Failed to process registration: ' + err.message });
   }
 });
 
-// 3. Statistic Tracking & Analysis Endpoint (For Admin Website)
-app.get('/api/admin/statistics', async (req, res) => {
+// 2. Verify OTP & Finalize Account
+app.post('/api/public/verify-otp', async (req, res) => {
+  const { identifier, email, otp } = req.body;
+
   try {
-    const { data: logs } = await supabase.from('borrow_logs').select('*').order('id', { ascending: false });
-    const { data: items } = await supabase.from('inventory').select('*');
+    const { data: user, error: findErr } = await supabase
+      .from('requesters')
+      .select('*')
+      .or(`identifier.eq.${identifier},email.eq.${email.trim().toLowerCase()}`)
+      .single();
 
-    const totalBorrowed = logs ? logs.filter(l => l.status === 'BORROWED').length : 0;
-    const totalReturned = logs ? logs.filter(l => l.status === 'RETURNED').length : 0;
-    const damagedCount = logs ? logs.filter(l => l.item_condition === 'Damaged').length : 0;
+    if (findErr || !user) {
+      return res.status(404).json({ error: 'Account record not found.' });
+    }
 
-    res.json({
-      totalBorrowed,
-      totalReturned,
-      damagedCount,
-      recentLogs: logs || [],
-      inventorySummary: items || []
-    });
+    if (user.otp_code !== otp.trim()) {
+      return res.status(400).json({ error: 'Invalid authentication code.' });
+    }
+
+    if (new Date() > new Date(user.otp_expires_at)) {
+      return res.status(400).json({ error: 'Authentication code has expired. Please request a new one.' });
+    }
+
+    // Mark account active and clear OTP
+    const { error: verifyErr } = await supabase
+      .from('requesters')
+      .update({ is_verified: true, otp_code: null, otp_expires_at: null })
+      .eq('id', user.id);
+
+    if (verifyErr) throw verifyErr;
+
+    res.json({ message: 'Email verified successfully! You can now sign in.', user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
