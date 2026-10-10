@@ -43,13 +43,8 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// In-memory cache for temporary pending OTP verification
-const pendingRegistrations = new Map();
-
-// Helper to generate a 6-digit numeric verification code
-function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
+// Cache for pending borrower activations (Token -> User Data)
+const pendingTokens = new Map();
 
 // -----------------------------------------------------------------
 // 3. HEALTH & STATUS CHECK
@@ -63,10 +58,10 @@ app.get('/health', (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 4. BORROWER AUTHENTICATION & GMAIL OTP WORKFLOW
+// 4. BORROWER AUTHENTICATION & ONE-CLICK EMAIL ACTIVATION
 // -----------------------------------------------------------------
 
-// A. Step 1: Send Gmail OTP for Registration
+// A. Step 1: Submit Registration -> Send Email with Clickable Verification Link
 app.post('/api/public/register', async (req, res) => {
   try {
     const { full_name, identifier, email, role, department, password } = req.body;
@@ -75,7 +70,7 @@ app.post('/api/public/register', async (req, res) => {
       return res.status(400).json({ error: 'All registration fields are required.' });
     }
 
-    // Check if identifier or email already exists in Supabase
+    // Check if account already exists in Supabase
     const { data: existingUser, error: checkError } = await supabase
       .from('borrowers')
       .select('id, identifier, email')
@@ -84,120 +79,156 @@ app.post('/api/public/register', async (req, res) => {
 
     if (checkError && checkError.code !== 'PGRST116') {
       console.error('Supabase user lookup error:', checkError);
-      return res.status(500).json({ error: 'Database query failed: ' + checkError.message });
+      return res.status(500).json({ error: 'Database check failed: ' + checkError.message });
     }
 
     if (existingUser) {
       return res.status(400).json({ error: 'An account with this ID or Gmail address already exists.' });
     }
 
-    // Generate 6-digit code
-    const otp = generateOTP();
+    // Generate unique verification token
+    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
-    // Cache registration details temporarily (expires in 10 minutes)
-    pendingRegistrations.set(identifier, {
+    // Save pending borrower data for 15 minutes
+    pendingTokens.set(token, {
       full_name,
       identifier,
       email,
       role: role || 'Student',
       department: department || 'BSIT',
       password,
-      otp,
-      expiresAt: Date.now() + 10 * 60 * 1000
+      expiresAt: Date.now() + 15 * 60 * 1000
     });
 
-    // Send email using Nodemailer
+    const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/public/verify-email?token=${token}`;
+
     const mailOptions = {
       from: `"CDM SmartTrack System" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: 'CDM SmartTrack - Your Borrower Verification Code',
+      subject: 'Verify your CDM SmartTrack Account',
       html: `
-        <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; max-width: 500px; margin: auto;">
-          <h2 style="color: #10b981; margin-top: 0;">CDM SMARTTRACK</h2>
-          <p style="font-size: 14px; color: #cbd5e1;">Colegio de Montalban Borrower Registration</p>
-          <hr style="border: none; border-top: 1px solid #334155; margin: 16px 0;" />
-          <p>Hello <strong>${full_name}</strong>,</p>
-          <p style="color: #cbd5e1;">Use the following 6-digit verification code to complete your borrower account registration:</p>
-          <div style="background-color: #1e293b; padding: 16px; border-radius: 8px; text-align: center; font-size: 28px; font-weight: bold; letter-spacing: 6px; color: #38bdf8; border: 1px dashed #38bdf8; margin: 20px 0;">
-            ${otp}
+        <div style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 28px; border-radius: 12px; max-width: 520px; margin: auto; text-align: center;">
+          <h2 style="color: #10b981; margin-bottom: 4px;">CDM SMARTTRACK</h2>
+          <p style="color: #94a3b8; font-size: 13px; margin-top: 0;">Colegio de Montalban Borrower Portal</p>
+          <hr style="border: none; border-top: 1px solid #334155; margin: 20px 0;" />
+          <p style="font-size: 15px; color: #e2e8f0; text-align: left;">Hello <strong>${full_name}</strong>,</p>
+          <p style="font-size: 14px; color: #cbd5e1; text-align: left; line-height: 1.5;">
+            Thank you for registering. Tap the button below to confirm your email and activate your borrower account:
+          </p>
+          <div style="margin: 28px 0;">
+            <a href="${verificationUrl}" style="background-color: #10b981; color: #042f2e; padding: 14px 28px; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px; display: inline-block;">
+              Activate My Account
+            </a>
           </div>
-          <p style="font-size: 12px; color: #94a3b8;">This code is valid for 10 minutes. If you did not initiate this request, you can safely ignore this message.</p>
+          <p style="font-size: 12px; color: #64748b;">This verification button is valid for 15 minutes. If you did not create this account, you can safely ignore this message.</p>
         </div>
       `
     };
 
     await transporter.sendMail(mailOptions);
-    res.json({ success: true, message: `Verification OTP dispatched to ${email}.` });
+    res.json({ success: true, message: `A verification link has been sent to ${email}.` });
   } catch (error) {
-    console.error('Registration OTP dispatch failed:', error);
+    console.error('Registration link dispatch error:', error);
     res.status(500).json({ error: error.message || 'Failed to dispatch verification email.' });
   }
 });
 
-// B. Step 2: Verify OTP & Insert Borrower Record into Supabase
-app.post('/api/public/verify-otp', async (req, res) => {
+// B. Step 2: User Clicks Button in Gmail -> Browser hits this route -> Supabase record created
+app.get('/api/public/verify-email', async (req, res) => {
   try {
-    const { identifier, email, otp } = req.body;
+    const { token } = req.query;
 
-    if (!identifier || !otp) {
-      return res.status(400).json({ error: 'Identifier and OTP code are required.' });
+    if (!token || !pendingTokens.has(token)) {
+      return res.status(400).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Link Expired</title></head>
+        <body style="font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
+          <div style="background-color: #1e293b; border: 1px solid #ef4444; border-radius: 16px; padding: 32px; max-width: 420px; text-align: center;">
+            <div style="font-size: 48px; color: #ef4444; margin-bottom: 12px;">✕</div>
+            <h2 style="color: #ef4444; margin: 0 0 10px 0;">Link Invalid or Expired</h2>
+            <p style="color: #94a3b8; font-size: 14px; line-height: 1.5;">This verification link has expired or has already been used. Please register again from the CDM SmartTrack mobile app.</p>
+          </div>
+        </body>
+        </html>
+      `);
     }
 
-    const pending = pendingRegistrations.get(identifier);
-
-    if (!pending) {
-      return res.status(400).json({ error: 'No pending registration found for this ID. Please register again.' });
-    }
+    const pending = pendingTokens.get(token);
 
     if (Date.now() > pending.expiresAt) {
-      pendingRegistrations.delete(identifier);
-      return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+      pendingTokens.delete(token);
+      return res.status(400).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Verification Expired</title></head>
+        <body style="font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
+          <div style="background-color: #1e293b; border: 1px solid #ef4444; border-radius: 16px; padding: 32px; max-width: 420px; text-align: center;">
+            <h2 style="color: #ef4444;">Verification Expired</h2>
+            <p style="color: #94a3b8;">The 15-minute verification window has passed. Please submit registration again.</p>
+          </div>
+        </body>
+        </html>
+      `);
     }
 
-    if (pending.otp !== otp.toString().trim()) {
-      return res.status(400).json({ error: 'Incorrect verification code. Please check your Gmail.' });
-    }
-
-    // Insert user into Supabase
-    const { data: newUser, error: insertError } = await supabase
-      .from('borrowers')
-      .insert([
-        {
-          full_name: pending.full_name,
-          identifier: pending.identifier,
-          email: pending.email,
-          role: pending.role,
-          department: pending.department,
-          password: pending.password,
-          created_at: new Date().toISOString()
-        }
-      ])
-      .select()
-      .single();
+    // Insert user into Supabase borrowers table
+    const { error: insertError } = await supabase.from('borrowers').insert([
+      {
+        full_name: pending.full_name,
+        identifier: pending.identifier,
+        email: pending.email,
+        role: pending.role,
+        department: pending.department,
+        password: pending.password,
+        created_at: new Date().toISOString()
+      }
+    ]);
 
     if (insertError) {
       console.error('Supabase borrower insert error:', insertError);
-      return res.status(500).json({ error: 'Failed to create borrower account: ' + insertError.message });
+      return res.status(500).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Database Error</title></head>
+        <body style="font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px;">
+          <div style="background-color: #1e293b; border: 1px solid #ef4444; border-radius: 16px; padding: 32px; max-width: 420px; text-align: center;">
+            <h2 style="color: #ef4444;">Database Insert Failed</h2>
+            <p style="color: #94a3b8;">${insertError.message}</p>
+          </div>
+        </body>
+        </html>
+      `);
     }
 
-    // Clean up cached pending registration
-    pendingRegistrations.delete(identifier);
+    // Clean up used token
+    pendingTokens.delete(token);
 
-    res.json({
-      success: true,
-      message: 'Borrower verified and registered successfully.',
-      user: {
-        id: newUser.id,
-        full_name: newUser.full_name,
-        identifier: newUser.identifier,
-        email: newUser.email,
-        role: newUser.role,
-        department: newUser.department
-      }
-    });
+    // Confirmation webpage
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Account Verified</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
+        <div style="background-color: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 32px; max-width: 420px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+          <div style="font-size: 52px; color: #10b981; margin-bottom: 12px;">✓</div>
+          <h2 style="color: #10b981; margin: 0 0 10px 0;">Account Activated!</h2>
+          <p style="color: #cbd5e1; font-size: 15px; line-height: 1.5; margin-bottom: 24px;">
+            Your borrower account for <strong>${pending.full_name}</strong> is now officially verified.
+          </p>
+          <div style="background-color: #0f172a; padding: 14px; border-radius: 8px; border: 1px dashed #10b981; font-size: 14px; color: #38bdf8;">
+            You can return to the CDM SmartTrack mobile app and log in now.
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
   } catch (error) {
-    console.error('Verify OTP route error:', error);
-    res.status(500).json({ error: error.message || 'Server error verifying OTP.' });
+    console.error('Email verification route error:', error);
+    res.status(500).send('An unexpected server error occurred during verification.');
   }
 });
 
@@ -247,7 +278,7 @@ app.post('/api/public/login', async (req, res) => {
 // 5. INVENTORY CATALOG & REQUISITIONS
 // -----------------------------------------------------------------
 
-// Get all inventory items
+// Fetch inventory catalog
 app.get('/api/public/inventory', async (req, res) => {
   try {
     const { data: inventory, error } = await supabase
@@ -299,7 +330,7 @@ app.post('/api/public/requests', async (req, res) => {
   }
 });
 
-// Get user's own borrow requests (My Tickets)
+// Fetch user's own borrow requests (My Tickets)
 app.get('/api/public/my-requests', async (req, res) => {
   try {
     const { identifier } = req.query;
