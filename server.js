@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 // -----------------------------------------------------------------
-// 1. SUPABASE CLIENT INITIALIZATION
+// 1. SUPABASE CLIENT INITIALIZATION (Auto-sanitized)
 // -----------------------------------------------------------------
 let rawUrl = (process.env.SUPABASE_URL || 'https://imjdhuczyqaxhifyucbo.supabase.co').trim();
 rawUrl = rawUrl.replace(/^["']|["']$/g, '');
@@ -31,14 +31,15 @@ const rawKey = (
 
 const supabase = createClient(rawUrl, rawKey);
 
-// In-memory token storage for pending registrations
+// Cache for pending borrower activations (Token -> User Data)
 const pendingTokens = new Map();
 
-// Helper to send email via EmailJS HTTPS REST API (Port 443 - Bypasses Render SMTP Block)
+// Helper to send email via EmailJS HTTPS REST API (Strict Mode / Private Key Enabled)
 async function sendVerificationViaEmailJS(toEmail, fullName, verificationUrl) {
   const serviceId = (process.env.EMAILJS_SERVICE_ID || '').trim();
   const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').trim();
   const publicKey = (process.env.EMAILJS_PUBLIC_KEY || '').trim();
+  const privateKey = (process.env.EMAILJS_PRIVATE_KEY || '').trim();
 
   if (!serviceId || !templateId || !publicKey) {
     throw new Error('EmailJS environment keys missing on Render dashboard.');
@@ -48,6 +49,7 @@ async function sendVerificationViaEmailJS(toEmail, fullName, verificationUrl) {
     service_id: serviceId,
     template_id: templateId,
     user_id: publicKey,
+    accessToken: privateKey, // Required for non-browser strict mode
     template_params: {
       to_email: toEmail,
       to_name: fullName,
@@ -82,7 +84,7 @@ app.get('/health', (req, res) => {
 // 3. BORROWER AUTHENTICATION & EMAIL ACTIVATION
 // -----------------------------------------------------------------
 
-// A. Registration submission
+// A. Step 1: Submit Registration -> Send Link via HTTPS
 app.post('/api/public/register', async (req, res) => {
   try {
     const { full_name, identifier, email, role, department, password } = req.body;
@@ -91,6 +93,7 @@ app.post('/api/public/register', async (req, res) => {
       return res.status(400).json({ error: 'All registration fields are required.' });
     }
 
+    // Check if account already exists
     const { data: existingUser, error: checkError } = await supabase
       .from('borrowers')
       .select('id, identifier, email')
@@ -120,6 +123,7 @@ app.post('/api/public/register', async (req, res) => {
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/public/verify-email?token=${token}`;
 
+    // Send over standard HTTPS Port 443 with accessToken authentication
     await sendVerificationViaEmailJS(email, full_name, verificationUrl);
     console.log(`✓ Verification email sent to ${email}`);
 
@@ -133,7 +137,7 @@ app.post('/api/public/register', async (req, res) => {
   }
 });
 
-// B. Account activation link handler
+// B. Step 2: User Clicks Button in Gmail -> Account activated in Supabase
 app.get('/api/public/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
