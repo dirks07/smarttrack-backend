@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 // -----------------------------------------------------------------
-// 1. SUPABASE CLIENT INITIALIZATION
+// 1. SUPABASE INITIALIZATION
 // -----------------------------------------------------------------
 let rawUrl = (process.env.SUPABASE_URL || 'https://imjdhuczyqaxhifyucbo.supabase.co').trim().replace(/^["']|["']$/g, '');
 try {
@@ -29,11 +29,10 @@ const rawKey = (
 
 const supabase = createClient(rawUrl, rawKey);
 
-// In-memory token stores for verification links (15 min lifespan)
 const pendingBorrowerTokens = new Map();
 const pendingAdminTokens = new Map();
 
-// Universal EmailJS HTTPS REST Dispatcher
+// Helper: EmailJS HTTPS Dispatcher
 async function sendVerificationEmail({ toEmail, fullName, verificationUrl, portalType }) {
   const serviceId = (process.env.EMAILJS_SERVICE_ID || '').replace(/^["']|["']$/g, '').trim();
   const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').replace(/^["']|["']$/g, '').trim();
@@ -59,8 +58,6 @@ async function sendVerificationEmail({ toEmail, fullName, verificationUrl, porta
     payload.accessToken = privateKey;
   }
 
-  console.log(`[EmailJS] Dispatching to ${toEmail} for ${portalType}`);
-
   const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -69,7 +66,6 @@ async function sendVerificationEmail({ toEmail, fullName, verificationUrl, porta
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('[EmailJS Failure]:', errorText);
     throw new Error(`EmailJS Error: ${errorText}`);
   }
 }
@@ -82,7 +78,7 @@ app.get('/health', (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 3. BORROWER FLOW (Mobile App)
+// 3. BORROWER AUTHENTICATION (Mobile)
 // -----------------------------------------------------------------
 app.post('/api/public/register', async (req, res) => {
   try {
@@ -98,32 +94,21 @@ app.post('/api/public/register', async (req, res) => {
       .maybeSingle();
 
     if (existingUser) {
-      return res.status(400).json({ error: 'A borrower account with this ID or Email already exists.' });
+      return res.status(400).json({ error: 'Borrower ID or Email already exists.' });
     }
 
     const token = 'b_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     pendingBorrowerTokens.set(token, {
-      full_name,
-      identifier,
-      email,
-      role: role || 'Student',
-      department: department || 'BSIT',
-      password,
+      full_name, identifier, email, role: role || 'Student', department: department || 'BSIT', password,
       expiresAt: Date.now() + 15 * 60 * 1000
     });
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/public/verify-email?token=${token}`;
-    await sendVerificationEmail({
-      toEmail: email,
-      fullName: full_name,
-      verificationUrl,
-      portalType: 'Student Borrower'
-    });
+    await sendVerificationEmail({ toEmail: email, fullName: full_name, verificationUrl, portalType: 'Student Borrower' });
 
     res.json({ success: true, message: `Verification email sent to ${email}.` });
   } catch (error) {
-    console.error('Borrower registration error:', error);
-    res.status(500).json({ error: error.message || 'Borrower registration failed.' });
+    res.status(500).json({ error: error.message || 'Registration failed.' });
   }
 });
 
@@ -131,13 +116,13 @@ app.get('/api/public/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
     if (!token || !pendingBorrowerTokens.has(token)) {
-      return res.status(400).send(`<h2>Link Expired or Invalid</h2><p>Please register again from the mobile app.</p>`);
+      return res.status(400).send(`<h2>Link Expired or Invalid</h2>`);
     }
 
     const pending = pendingBorrowerTokens.get(token);
     if (Date.now() > pending.expiresAt) {
       pendingBorrowerTokens.delete(token);
-      return res.status(400).send(`<h2>Token Expired</h2><p>The 15-minute verification window has passed.</p>`);
+      return res.status(400).send(`<h2>Token Expired</h2>`);
     }
 
     const { error: insertError } = await supabase.from('borrowers').insert([{
@@ -153,22 +138,12 @@ app.get('/api/public/verify-email', async (req, res) => {
     if (insertError) throw insertError;
     pendingBorrowerTokens.delete(token);
 
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Account Activated</title></head>
-      <body style="font-family: Arial, sans-serif; background-color: #090d16; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
-        <div style="background-color: #111827; border: 1px solid #1f293d; border-radius: 20px; padding: 36px; max-width: 440px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6);">
-          <div style="font-size: 48px; color: #10b981; margin-bottom: 12px;">✓</div>
-          <h2 style="color: #10b981; margin: 0 0 10px 0;">Borrower Activated!</h2>
-          <p style="color: #cbd5e1; font-size: 15px; margin-bottom: 20px;">Welcome, <strong>${pending.full_name}</strong>. Your account has been verified.</p>
-          <div style="background-color: #1e293b; padding: 12px; border-radius: 8px; border: 1px dashed #10b981; font-size: 13px; color: #38bdf8;">
-            You can now open the CDM SmartTrack mobile app and log in.
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
+    res.send(`<body style="font-family:sans-serif;background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
+      <div style="background:#131b2e;padding:36px;border-radius:16px;text-align:center;">
+        <h2 style="color:#10b981;">Account Activated!</h2>
+        <p>You can now sign in on the mobile app.</p>
+      </div>
+    </body>`);
   } catch (error) {
     res.status(500).send(`Activation failed: ${error.message}`);
   }
@@ -192,7 +167,7 @@ app.post('/api/public/login', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 4. ADMIN WORKSTATION FLOW (Desktop App)
+// 4. ADMIN AUTHENTICATION (Desktop)
 // -----------------------------------------------------------------
 app.post('/api/admin/register', async (req, res) => {
   try {
@@ -208,31 +183,20 @@ app.post('/api/admin/register', async (req, res) => {
       .maybeSingle();
 
     if (existingAdmin) {
-      return res.status(400).json({ error: 'An admin account with this Staff ID or Gmail already exists.' });
+      return res.status(400).json({ error: 'Admin Staff ID or Email already exists.' });
     }
 
     const token = 'a_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     pendingAdminTokens.set(token, {
-      full_name,
-      identifier,
-      email,
-      role: role || 'Admin',
-      department: department || 'Staff',
-      password,
+      full_name, identifier, email, role: role || 'Admin', department: department || 'Custodian', password,
       expiresAt: Date.now() + 15 * 60 * 1000
     });
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/admin/verify-email?token=${token}`;
-    await sendVerificationEmail({
-      toEmail: email,
-      fullName: full_name,
-      verificationUrl,
-      portalType: 'Staff Administrator'
-    });
+    await sendVerificationEmail({ toEmail: email, fullName: full_name, verificationUrl, portalType: 'Administrator' });
 
     res.json({ success: true, message: `Admin activation link sent to ${email}.` });
   } catch (error) {
-    console.error('Admin registration error:', error);
     res.status(500).json({ error: error.message || 'Admin registration failed.' });
   }
 });
@@ -241,16 +205,15 @@ app.get('/api/admin/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
     if (!token || !pendingAdminTokens.has(token)) {
-      return res.status(400).send(`<h2>Link Expired or Invalid</h2><p>Please re-register from the desktop portal.</p>`);
+      return res.status(400).send(`<h2>Link Expired or Invalid</h2>`);
     }
 
     const pending = pendingAdminTokens.get(token);
     if (Date.now() > pending.expiresAt) {
       pendingAdminTokens.delete(token);
-      return res.status(400).send(`<h2>Token Expired</h2><p>The 15-minute verification window has passed.</p>`);
+      return res.status(400).send(`<h2>Token Expired</h2>`);
     }
 
-    // Supports both 'identifier' and 'username' schema constraints
     const { error: insertError } = await supabase.from('admins').insert([{
       full_name: pending.full_name,
       identifier: pending.identifier,
@@ -265,22 +228,12 @@ app.get('/api/admin/verify-email', async (req, res) => {
     if (insertError) throw insertError;
     pendingAdminTokens.delete(token);
 
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Admin Activated</title></head>
-      <body style="font-family: Arial, sans-serif; background-color: #090d16; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
-        <div style="background-color: #111827; border: 1px solid #1f293d; border-radius: 20px; padding: 36px; max-width: 440px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6);">
-          <div style="font-size: 48px; color: #38bdf8; margin-bottom: 12px;">🛡️</div>
-          <h2 style="color: #38bdf8; margin: 0 0 10px 0;">Administrator Activated!</h2>
-          <p style="color: #cbd5e1; font-size: 15px; margin-bottom: 20px;">Welcome, <strong>${pending.full_name}</strong>. Your staff credentials are ready.</p>
-          <div style="background-color: #1e293b; padding: 12px; border-radius: 8px; border: 1px dashed #38bdf8; font-size: 13px; color: #67e8f9;">
-            Return to the CDM SmartTrack Desktop Application to sign in.
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
+    res.send(`<body style="font-family:sans-serif;background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
+      <div style="background:#131b2e;padding:36px;border-radius:16px;text-align:center;">
+        <h2 style="color:#38bdf8;">Administrator Activated!</h2>
+        <p>You can now sign in to the Desktop Command Center.</p>
+      </div>
+    </body>`);
   } catch (error) {
     res.status(500).send(`Admin activation failed: ${error.message}`);
   }
@@ -289,8 +242,6 @@ app.get('/api/admin/verify-email', async (req, res) => {
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { identifier, password } = req.body;
-
-    // Checks identifier or legacy username
     const { data: admin, error } = await supabase
       .from('admins')
       .select('*')
@@ -306,7 +257,7 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 5. INVENTORY & REQUISITIONS ENDPOINTS
+// 5. INVENTORY & ADD/RESTOCK ITEMS
 // -----------------------------------------------------------------
 app.get('/api/public/inventory', async (req, res) => {
   const { data, error } = await supabase.from('inventory').select('*').order('id', { ascending: true });
@@ -314,19 +265,70 @@ app.get('/api/public/inventory', async (req, res) => {
   res.json(data || []);
 });
 
+// Admin Add or Restock Equipment
+app.post('/api/admin/inventory/add', async (req, res) => {
+  try {
+    const { asset_tag, name, category, quantity } = req.body;
+    const qty = parseInt(quantity, 10);
+
+    if (!name || isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ error: 'Item name and valid quantity are required.' });
+    }
+
+    // Check if asset tag already exists to restock counts
+    if (asset_tag) {
+      const { data: existing } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('asset_tag', asset_tag)
+        .maybeSingle();
+
+      if (existing) {
+        const updatedQty = existing.quantity + qty;
+        const updatedAvail = (existing.available_quantity || existing.quantity) + qty;
+
+        const { data: updated, error: updateErr } = await supabase
+          .from('inventory')
+          .update({ quantity: updatedQty, available_quantity: updatedAvail })
+          .eq('id', existing.id)
+          .select()
+          .single();
+
+        if (updateErr) throw updateErr;
+        return res.json({ success: true, item: updated, message: `Restocked ${qty} units of ${name}.` });
+      }
+    }
+
+    // Insert as new inventory item
+    const { data: newItem, error: insertErr } = await supabase
+      .from('inventory')
+      .insert([{
+        asset_tag: asset_tag || `TAG-${Date.now().toString(36).toUpperCase()}`,
+        name,
+        category: category || 'Equipment',
+        quantity: qty,
+        available_quantity: qty,
+        created_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (insertErr) throw insertErr;
+    res.json({ success: true, item: newItem, message: `Successfully added ${name} to inventory.` });
+  } catch (err) {
+    console.error('Inventory error:', err);
+    res.status(500).json({ error: err.message || 'Failed to add item.' });
+  }
+});
+
+// -----------------------------------------------------------------
+// 6. REQUISITIONS & ITEM TRACKING / CONDITION AUDIT
+// -----------------------------------------------------------------
 app.post('/api/public/requests', async (req, res) => {
   const { item_id, item_name, quantity, purpose, requester_name, identifier, role, department } = req.body;
   const { data, error } = await supabase.from('requests').insert([{
-    item_id,
-    item_name,
-    quantity: parseInt(quantity, 10),
-    purpose,
-    requester_name,
-    identifier,
-    role: role || 'Student',
-    department: department || 'BSIT',
-    status: 'PENDING',
-    created_at: new Date().toISOString()
+    item_id, item_name, quantity: parseInt(quantity, 10), purpose, requester_name, identifier,
+    role: role || 'Student', department: department || 'BSIT', status: 'PENDING', created_at: new Date().toISOString()
   }]).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -340,18 +342,70 @@ app.get('/api/public/my-requests', async (req, res) => {
   res.json(data || []);
 });
 
+// Admin get all requisitions and tracking records
 app.get('/api/admin/all-requests', async (req, res) => {
   const { data, error } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
 });
 
+// Admin Approve / Reject (Sets borrowed timestamp upon approval)
 app.patch('/api/admin/requests/:id', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-  const { data, error } = await supabase.from('requests').update({ status: status.toUpperCase() }).eq('id', id).select().single();
+
+  const updateFields = { status: status.toUpperCase() };
+  if (status.toUpperCase() === 'APPROVED') {
+    updateFields.borrowed_at = new Date().toISOString();
+  }
+
+  const { data, error } = await supabase.from('requests').update(updateFields).eq('id', id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true, ticket: data });
 });
 
-app.listen(PORT, () => console.log(`SmartTrack backend running on port ${PORT}`));
+// Admin Return Inspection & Condition Audit
+app.post('/api/admin/requests/:id/return', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { item_condition, admin_remarks } = req.body; // 'Good Condition' or 'Bad Condition / Damaged'
+
+    if (!item_condition) {
+      return res.status(400).json({ error: 'Please specify if the item is in good or bad condition.' });
+    }
+
+    const { data: ticket, error: fetchErr } = await supabase.from('requests').select('*').eq('id', id).single();
+    if (fetchErr || !ticket) return res.status(404).json({ error: 'Ticket not found.' });
+
+    // Update the request with return timestamp and manual condition inspection
+    const { data: updatedTicket, error: updateErr } = await supabase
+      .from('requests')
+      .update({
+        status: 'RETURNED',
+        returned_at: new Date().toISOString(),
+        item_condition,
+        admin_remarks: admin_remarks || ''
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    // Restore available inventory quantity if condition is good
+    if (ticket.item_id && item_condition.includes('Good')) {
+      const { data: inv } = await supabase.from('inventory').select('*').eq('id', ticket.item_id).maybeSingle();
+      if (inv) {
+        await supabase.from('inventory')
+          .update({ available_quantity: (inv.available_quantity || inv.quantity) + ticket.quantity })
+          .eq('id', inv.id);
+      }
+    }
+
+    res.json({ success: true, ticket: updatedTicket, message: 'Item returned and condition logged.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to complete return audit.' });
+  }
+});
+
+app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
