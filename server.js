@@ -11,18 +11,27 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Supabase Initialization
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+// Clean and sanitize Supabase URL & Key
+let rawUrl = (process.env.SUPABASE_URL || 'https://imjdhuczyqaxhifyucbo.supabase.co')
+  .trim()
+  .replace(/^["']|["']$/g, '');
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('CRITICAL: SUPABASE_URL and SUPABASE_KEY environment variables must be defined.');
+// Ensure no trailing slashes or accidental path suffixes
+try {
+  const parsed = new URL(rawUrl);
+  rawUrl = `${parsed.protocol}//${parsed.host}`;
+} catch (e) {
+  rawUrl = 'https://imjdhuczyqaxhifyucbo.supabase.co';
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const rawKey = (
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  ''
+).trim().replace(/^["']|["']$/g, '');
 
-// Gmail Transporter Setup (Nodemailer)
-const transporter = nodemailer.createTransport({
+const supabase = createClient(rawUrl, rawKey);
   service: 'gmail',
   auth: {
     user: process.env.GMAIL_USER,
