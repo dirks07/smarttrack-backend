@@ -33,10 +33,15 @@ const rawKey = (
 const supabase = createClient(rawUrl, rawKey);
 
 // -----------------------------------------------------------------
-// 2. NODEMAILER GMAIL TRANSPORTER
+// 2. OPTIMIZED HIGH-SPEED NODEMAILER TRANSPORTER (POOLED SSL)
 // -----------------------------------------------------------------
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,      // Direct SSL connection (bypasses TLS upgrade delays)
+  pool: true,        // Reuses existing sockets for immediate dispatch
+  maxConnections: 5,
+  maxMessages: 100,
   auth: {
     user: (process.env.EMAIL_USER || '').trim(),
     pass: (process.env.EMAIL_PASS || '').trim()
@@ -47,7 +52,7 @@ const transporter = nodemailer.createTransport({
 const pendingTokens = new Map();
 
 // -----------------------------------------------------------------
-// 3. HEALTH & STATUS CHECK
+// 3. HEALTH CHECK & KEEP-ALIVE
 // -----------------------------------------------------------------
 app.get('/health', (req, res) => {
   res.json({
@@ -58,10 +63,10 @@ app.get('/health', (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 4. BORROWER AUTHENTICATION & ONE-CLICK EMAIL ACTIVATION
+// 4. BORROWER AUTHENTICATION & INSTANT EMAIL ACTIVATION
 // -----------------------------------------------------------------
 
-// A. Step 1: Submit Registration -> Send Email with Clickable Verification Link
+// A. Step 1: Submit Registration -> Non-blocking immediate email dispatch
 app.post('/api/public/register', async (req, res) => {
   try {
     const { full_name, identifier, email, role, department, password } = req.body;
@@ -78,7 +83,7 @@ app.post('/api/public/register', async (req, res) => {
       .maybeSingle();
 
     if (checkError && checkError.code !== 'PGRST116') {
-      console.error('Supabase user lookup error:', checkError);
+      console.error('Supabase lookup error:', checkError);
       return res.status(500).json({ error: 'Database check failed: ' + checkError.message });
     }
 
@@ -120,20 +125,27 @@ app.post('/api/public/register', async (req, res) => {
               Activate My Account
             </a>
           </div>
-          <p style="font-size: 12px; color: #64748b;">This verification button is valid for 15 minutes. If you did not create this account, you can safely ignore this message.</p>
+          <p style="font-size: 12px; color: #64748b;">This link is valid for 15 minutes. If you did not create this account, please ignore this email.</p>
         </div>
       `
     };
 
-    await transporter.sendMail(mailOptions);
-    res.json({ success: true, message: `A verification link has been sent to ${email}.` });
+    // Send email asynchronously in background so mobile client receives an instant response
+    transporter.sendMail(mailOptions)
+      .then(() => console.log(`✓ Email sent successfully to ${email}`))
+      .catch((err) => console.error('SMTP Background Error:', err));
+
+    return res.json({
+      success: true,
+      message: `A verification link has been sent to ${email}.`
+    });
   } catch (error) {
     console.error('Registration link dispatch error:', error);
     res.status(500).json({ error: error.message || 'Failed to dispatch verification email.' });
   }
 });
 
-// B. Step 2: User Clicks Button in Gmail -> Browser hits this route -> Supabase record created
+// B. Step 2: User Clicks Button in Gmail -> Account activated in Supabase
 app.get('/api/public/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
@@ -147,7 +159,7 @@ app.get('/api/public/verify-email', async (req, res) => {
           <div style="background-color: #1e293b; border: 1px solid #ef4444; border-radius: 16px; padding: 32px; max-width: 420px; text-align: center;">
             <div style="font-size: 48px; color: #ef4444; margin-bottom: 12px;">✕</div>
             <h2 style="color: #ef4444; margin: 0 0 10px 0;">Link Invalid or Expired</h2>
-            <p style="color: #94a3b8; font-size: 14px; line-height: 1.5;">This verification link has expired or has already been used. Please register again from the CDM SmartTrack mobile app.</p>
+            <p style="color: #94a3b8; font-size: 14px; line-height: 1.5;">This verification link has expired or has already been used. Please register again from the mobile app.</p>
           </div>
         </body>
         </html>
@@ -162,7 +174,7 @@ app.get('/api/public/verify-email', async (req, res) => {
         <!DOCTYPE html>
         <html>
         <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Verification Expired</title></head>
-        <body style="font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;">
+        <body style="font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px;">
           <div style="background-color: #1e293b; border: 1px solid #ef4444; border-radius: 16px; padding: 32px; max-width: 420px; text-align: center;">
             <h2 style="color: #ef4444;">Verification Expired</h2>
             <p style="color: #94a3b8;">The 15-minute verification window has passed. Please submit registration again.</p>
@@ -201,7 +213,7 @@ app.get('/api/public/verify-email', async (req, res) => {
       `);
     }
 
-    // Clean up used token
+    // Clear used token
     pendingTokens.delete(token);
 
     // Confirmation webpage
@@ -217,7 +229,7 @@ app.get('/api/public/verify-email', async (req, res) => {
           <div style="font-size: 52px; color: #10b981; margin-bottom: 12px;">✓</div>
           <h2 style="color: #10b981; margin: 0 0 10px 0;">Account Activated!</h2>
           <p style="color: #cbd5e1; font-size: 15px; line-height: 1.5; margin-bottom: 24px;">
-            Your borrower account for <strong>${pending.full_name}</strong> is now officially verified.
+            Your borrower account for <strong>${pending.full_name}</strong> is now active.
           </p>
           <div style="background-color: #0f172a; padding: 14px; border-radius: 8px; border: 1px dashed #10b981; font-size: 14px; color: #38bdf8;">
             You can return to the CDM SmartTrack mobile app and log in now.
