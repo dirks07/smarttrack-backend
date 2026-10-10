@@ -33,18 +33,19 @@ const rawKey = (
 const supabase = createClient(rawUrl, rawKey);
 
 // -----------------------------------------------------------------
-// 2. OPTIMIZED HIGH-SPEED NODEMAILER TRANSPORTER (POOLED SSL)
+// 2. NODEMAILER TRANSPORTER (PORT 587 - RENDER COMPATIBLE)
 // -----------------------------------------------------------------
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,      // Direct SSL connection (bypasses TLS upgrade delays)
-  pool: true,        // Reuses existing sockets for immediate dispatch
-  maxConnections: 5,
-  maxMessages: 100,
+  port: 587,
+  secure: false, // Must be false for port 587 (uses STARTTLS)
+  requireTLS: true,
   auth: {
     user: (process.env.EMAIL_USER || '').trim(),
     pass: (process.env.EMAIL_PASS || '').trim()
+  },
+  tls: {
+    rejectUnauthorized: false
   }
 });
 
@@ -63,10 +64,10 @@ app.get('/health', (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 4. BORROWER AUTHENTICATION & INSTANT EMAIL ACTIVATION
+// 4. BORROWER AUTHENTICATION & ONE-CLICK EMAIL ACTIVATION
 // -----------------------------------------------------------------
 
-// A. Step 1: Submit Registration -> Non-blocking immediate email dispatch
+// A. Step 1: Submit Registration -> Send Verification Link to Gmail
 app.post('/api/public/register', async (req, res) => {
   try {
     const { full_name, identifier, email, role, department, password } = req.body;
@@ -130,18 +131,17 @@ app.post('/api/public/register', async (req, res) => {
       `
     };
 
-    // Send email asynchronously in background so mobile client receives an instant response
-    transporter.sendMail(mailOptions)
-      .then(() => console.log(`✓ Email sent successfully to ${email}`))
-      .catch((err) => console.error('SMTP Background Error:', err));
+    // Send email using port 587
+    await transporter.sendMail(mailOptions);
+    console.log(`✓ Verification email sent successfully to ${email}`);
 
     return res.json({
       success: true,
       message: `A verification link has been sent to ${email}.`
     });
   } catch (error) {
-    console.error('Registration link dispatch error:', error);
-    res.status(500).json({ error: error.message || 'Failed to dispatch verification email.' });
+    console.error('SMTP / Registration failure:', error);
+    return res.status(500).json({ error: 'Email delivery failed: ' + (error.message || 'Check server logs.') });
   }
 });
 
@@ -213,7 +213,7 @@ app.get('/api/public/verify-email', async (req, res) => {
       `);
     }
 
-    // Clear used token
+    // Clean up used token
     pendingTokens.delete(token);
 
     // Confirmation webpage
