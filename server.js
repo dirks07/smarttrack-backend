@@ -423,3 +423,90 @@ app.get('/api/public/requests/user/:identifier', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
 });
+
+const nodemailer = require('nodemailer');
+
+// Setup Gmail Transporter (Use Gmail App Password)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER, // e.g., your official email
+    pass: process.env.GMAIL_APP_PASS // 16-character Google App Password
+  }
+});
+
+// 1. Send OTP / Verification Code to Gmail
+app.post('/api/auth/send-otp', async (req, res) => {
+  const { email, roleType } = req.body; // roleType: 'admin' or 'requester'
+  if (!email) return res.status(400).json({ error: 'Email is required.' });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 mins
+
+  const table = roleType === 'admin' ? 'admins' : 'requesters';
+  await supabase.from(table).update({ otp_code: otp, otp_expires_at: expiresAt }).eq('email', email.trim());
+
+  try {
+    await transporter.sendMail({
+      from: '"CDM SmartTrack Security" <no-reply@cdm.edu.ph>',
+      to: email,
+      subject: 'CDM SmartTrack Verification Code',
+      html: `<h3>Your Verification Code</h3><p>Use code <b>${otp}</b> to verify your access. Valid for 10 minutes.</p>`
+    });
+    res.json({ message: 'Verification code sent to your Gmail.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to send email: ' + err.message });
+  }
+});
+
+// 2. Return Item & Condition Assessment (Used by Desktop Dispatcher)
+app.post('/api/dispatcher/return', async (req, res) => {
+  const { log_id, item_condition, remarks, custodian_id } = req.body;
+  try {
+    const { data: log, error: fetchErr } = await supabase.from('borrow_logs').select('*').eq('id', log_id).single();
+    if (fetchErr || !log) return res.status(404).json({ error: 'Log entry not found.' });
+
+    // Mark as RETURNED
+    const { error: updateErr } = await supabase.from('borrow_logs').update({
+      status: 'RETURNED',
+      returned_at: new Date().toISOString(),
+      item_condition: item_condition || 'Good',
+      remarks: remarks || 'Returned on schedule',
+      custodian_id: custodian_id || 'Desktop-Dispatcher'
+    }).eq('id', log_id);
+
+    if (updateErr) throw updateErr;
+
+    // Increment inventory quantity back
+    const { data: inv } = await supabase.from('inventory').select('quantity').eq('asset_code', log.asset_code).single();
+    if (inv) {
+      await supabase.from('inventory').update({ quantity: inv.quantity + (log.quantity || 1) }).eq('asset_code', log.asset_code);
+    }
+
+    res.json({ message: `Asset ${log.asset_code} successfully returned and restocked.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Statistic Tracking & Analysis Endpoint (For Admin Website)
+app.get('/api/admin/statistics', async (req, res) => {
+  try {
+    const { data: logs } = await supabase.from('borrow_logs').select('*').order('id', { ascending: false });
+    const { data: items } = await supabase.from('inventory').select('*');
+
+    const totalBorrowed = logs ? logs.filter(l => l.status === 'BORROWED').length : 0;
+    const totalReturned = logs ? logs.filter(l => l.status === 'RETURNED').length : 0;
+    const damagedCount = logs ? logs.filter(l => l.item_condition === 'Damaged').length : 0;
+
+    res.json({
+      totalBorrowed,
+      totalReturned,
+      damagedCount,
+      recentLogs: logs || [],
+      inventorySummary: items || []
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
