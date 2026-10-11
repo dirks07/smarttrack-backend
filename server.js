@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+const PDFDocument = require('pdfkit');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -111,93 +112,29 @@ app.post('/api/public/register', async (req, res) => {
     res.status(500).json({ error: error.message || 'Registration failed.' });
   }
 });
-// POST /api/admin/inventory/deduct
-app.post('/api/admin/inventory/deduct', async (req, res) => {
+
+app.get('/api/public/verify-email', async (req, res) => {
   try {
-    const { asset_tag, item_name, quantity, ticket_id } = req.body;
-    const qtyToDeduct = parseInt(quantity, 10) || 1;
-
-    // 1. Fetch current equipment from database by asset_tag or name
-    let query = supabase.from('inventory').select('*');
-    if (asset_tag) {
-      query = query.eq('asset_tag', asset_tag);
-    } else {
-      query = query.ilike('name', `%${item_name}%`);
+    const { token } = req.query;
+    if (!token || !pendingBorrowerTokens.has(token)) {
+      return res.status(400).send(`<h2>Link Expired or Invalid</h2>`);
     }
 
-    const { data: items, error: fetchErr } = await query;
-    if (fetchErr || !items || items.length === 0) {
-      return res.status(404).json({ error: 'Item not found in catalog.' });
+    const pending = pendingBorrowerTokens.get(token);
+    if (Date.now() > pending.expiresAt) {
+      pendingBorrowerTokens.delete(token);
+      return res.status(400).send(`<h2>Token Expired</h2>`);
     }
 
-    const currentItem = items[0];
-    const currentStock = parseInt(currentItem.quantity, 10) || 0;
-
-    if (currentStock < qtyToDeduct) {
-      return res.status(400).json({ 
-        error: `Insufficient stock! Catalog only has ${currentStock} available.` 
-      });
-    }
-
-    const newStock = currentStock - qtyToDeduct;
-
-    // 2. Deduct quantity in inventory catalog
-    const { error: updateErr } = await supabase
-      .from('inventory')
-      .update({ quantity: newStock })
-      .eq('id', currentItem.id);
-
-    if (updateErr) throw updateErr;
-
-    // 3. (Optional) Record the borrowed_at timestamp on the ticket
-    if (ticket_id) {
-      await supabase
-        .from('requests')
-        .update({ 
-          borrowed_at: new Date().toISOString(),
-          status: 'APPROVED' // or 'DISPATCHED'
-        })
-        .eq('id', ticket_id);
-    }
-
-    return res.json({ 
-      success: true, 
-      message: `Successfully dispatched. Catalog updated: ${currentItem.name} stock reduced from ${currentStock} to ${newStock}.`,
-      remaining_stock: newStock 
-    });
-
-  } catch (err) {
-    console.error('Deduction error:', err);
-    return res.status(500).json({ error: 'Server error deducting catalog quantity.' });
-  }
-});
-// GET /api/inventory/item?tag=... or ?name=...
-app.get('/api/inventory/item', async (req, res) => {
-  try {
-    const { tag, name } = req.query;
-    let query = supabase.from('inventory').select('*');
-
-    if (tag) {
-      query = query.eq('asset_tag', tag);
-    } else if (name) {
-      query = query.ilike('name', `%${name}%`);
-    } else {
-      return res.status(400).json({ error: 'Provide tag or name' });
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    if (!data || data.length === 0) {
-      return res.status(404).json({ error: 'Item not found in catalog' });
-    }
-
-    // Return the single matched equipment row
-    return res.json(data[0]);
-  } catch (err) {
-    console.error('Fetch live inventory error:', err);
-    return res.status(500).json({ error: 'Failed to retrieve item stock' });
-  }
-});
+    const { error: insertError } = await supabase.from('borrowers').insert([{
+      full_name: pending.full_name,
+      identifier: pending.identifier,
+      email: pending.email,
+      role: pending.role,
+      department: pending.department,
+      password: pending.password,
+      created_at: new Date().toISOString()
+    }]);
 
     if (insertError) throw insertError;
     pendingBorrowerTokens.delete(token);
@@ -321,12 +258,39 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 5. INVENTORY & ADD/RESTOCK ITEMS
+// 5. INVENTORY & DEDUCTION / RESTOCK
 // -----------------------------------------------------------------
 app.get('/api/public/inventory', async (req, res) => {
   const { data, error } = await supabase.from('inventory').select('*').order('id', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
+});
+
+// Single Equipment Item Query
+app.get('/api/inventory/item', async (req, res) => {
+  try {
+    const { tag, name } = req.query;
+    let query = supabase.from('inventory').select('*');
+
+    if (tag) {
+      query = query.or(`asset_tag.eq.${tag},asset_code.eq.${tag}`);
+    } else if (name) {
+      query = query.ilike('name', `%${name}%`);
+    } else {
+      return res.status(400).json({ error: 'Provide tag or name' });
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Item not found in catalog' });
+    }
+
+    return res.json(data[0]);
+  } catch (err) {
+    console.error('Fetch live inventory error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve item stock' });
+  }
 });
 
 // Admin Add or Restock Equipment
@@ -339,7 +303,6 @@ app.post('/api/admin/inventory/add', async (req, res) => {
       return res.status(400).json({ error: 'Item name and valid quantity are required.' });
     }
 
-    // Check if asset tag already exists to restock counts
     if (asset_tag) {
       const { data: existing } = await supabase
         .from('inventory')
@@ -363,7 +326,6 @@ app.post('/api/admin/inventory/add', async (req, res) => {
       }
     }
 
-    // Insert as new inventory item
     const { data: newItem, error: insertErr } = await supabase
       .from('inventory')
       .insert([{
@@ -385,8 +347,76 @@ app.post('/api/admin/inventory/add', async (req, res) => {
   }
 });
 
+// DEDUCT FROM INVENTORY UPON DISPATCH
+app.post('/api/admin/inventory/deduct', async (req, res) => {
+  try {
+    const { asset_tag, item_name, item_id, quantity, ticket_id } = req.body;
+    const qtyToDeduct = parseInt(quantity, 10) || 1;
+
+    let targetItem = null;
+
+    // 1. Locate item in database
+    if (item_id) {
+      const { data: byId } = await supabase.from('inventory').select('*').eq('id', item_id).maybeSingle();
+      targetItem = byId;
+    }
+    if (!targetItem && asset_tag) {
+      const { data: byTag } = await supabase.from('inventory').select('*')
+        .or(`asset_tag.eq.${asset_tag},asset_code.eq.${asset_tag}`)
+        .maybeSingle();
+      targetItem = byTag;
+    }
+    if (!targetItem && item_name) {
+      const { data: byName } = await supabase.from('inventory').select('*')
+        .ilike('name', `%${item_name.trim()}%`)
+        .limit(1);
+      if (byName && byName.length > 0) targetItem = byName[0];
+    }
+
+    if (!targetItem) {
+      return res.status(404).json({ error: 'Item not found in catalog.' });
+    }
+
+    // 2. Compute stock
+    const currentStock = parseInt(targetItem.quantity, 10) || 0;
+    const newStock = Math.max(0, currentStock - qtyToDeduct);
+
+    // 3. Update inventory catalog
+    const { error: updateErr } = await supabase
+      .from('inventory')
+      .update({ 
+        quantity: newStock,
+        available_quantity: newStock 
+      })
+      .eq('id', targetItem.id);
+
+    if (updateErr) throw updateErr;
+
+    // 4. Update request status to CLAIMED
+    if (ticket_id) {
+      await supabase
+        .from('requests')
+        .update({ 
+          borrowed_at: new Date().toISOString(),
+          status: 'CLAIMED' 
+        })
+        .eq('id', ticket_id);
+    }
+
+    return res.json({ 
+      success: true, 
+      message: `Dispatched ${qtyToDeduct} unit(s).`,
+      remaining_stock: newStock 
+    });
+
+  } catch (err) {
+    console.error('Deduction error:', err);
+    return res.status(500).json({ error: 'Server error deducting catalog quantity.' });
+  }
+});
+
 // -----------------------------------------------------------------
-// 6. REQUISITIONS & ITEM TRACKING / CONDITION AUDIT
+// 6. REQUISITIONS & ITEM TRACKING / AUDIT
 // -----------------------------------------------------------------
 app.post('/api/public/requests', async (req, res) => {
   const { item_id, item_name, quantity, purpose, requester_name, identifier, role, department } = req.body;
@@ -406,14 +436,12 @@ app.get('/api/public/my-requests', async (req, res) => {
   res.json(data || []);
 });
 
-// Admin get all requisitions and tracking records
 app.get('/api/admin/all-requests', async (req, res) => {
   const { data, error } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
 });
 
-// Admin Approve / Reject (Sets borrowed timestamp upon approval)
 app.patch('/api/admin/requests/:id', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
@@ -432,7 +460,7 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const { id } = req.params;
-    const { item_condition, admin_remarks } = req.body; // 'Good Condition' or 'Bad Condition / Damaged'
+    const { item_condition, admin_remarks } = req.body;
 
     if (!item_condition) {
       return res.status(400).json({ error: 'Please specify if the item is in good or bad condition.' });
@@ -441,7 +469,6 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
     const { data: ticket, error: fetchErr } = await supabase.from('requests').select('*').eq('id', id).single();
     if (fetchErr || !ticket) return res.status(404).json({ error: 'Ticket not found.' });
 
-    // Update the request with return timestamp and manual condition inspection
     const { data: updatedTicket, error: updateErr } = await supabase
       .from('requests')
       .update({
@@ -456,78 +483,69 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
 
     if (updateErr) throw updateErr;
 
-    // Restore available inventory quantity if condition is good
+    // Restore inventory stock if item is returned in good condition
     if (ticket.item_id && item_condition.includes('Good')) {
       const { data: inv } = await supabase.from('inventory').select('*').eq('id', ticket.item_id).maybeSingle();
       if (inv) {
+        const restored = (parseInt(inv.quantity, 10) || 0) + parseInt(ticket.quantity || 1, 10);
         await supabase.from('inventory')
-          .update({ available_quantity: (inv.available_quantity || inv.quantity) + ticket.quantity })
+          .update({ 
+            quantity: restored, 
+            available_quantity: restored 
+          })
           .eq('id', inv.id);
       }
     }
 
-    res.json({ success: true, ticket: updatedTicket, message: 'Item returned and condition logged.' });
+    res.json({ success: true, ticket: updatedTicket, message: 'Item returned and stock updated.' });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Failed to complete return audit.' });
   }
 });
-const PDFDocument = require('pdfkit');
 
+// PDF Report Generator
 app.get('/api/admin/records-pdf', async (req, res) => {
   try {
-    // 1. Kuhanin ang totoong data mula sa database
-    let tickets = [];
-    if (typeof supabase !== 'undefined') {
-      const { data, error } = await supabase.from('requests').select('*').order('id', { ascending: false });
-      if (error) throw error;
-      tickets = data || [];
-    }
+    const { data: tickets, error } = await supabase.from('requests').select('*').order('id', { ascending: false });
+    if (error) throw error;
 
-    // 2. HTTP Headers para mismong PDF ang kilalanin ng cellphone browser
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="SmartTrack_Audit_Records.pdf"');
 
     const doc = new PDFDocument({ margin: 36, size: 'A4' });
     doc.pipe(res);
 
-    // Header Design
     doc.rect(0, 0, 595.28, 65).fill('#0b111e');
     doc.fillColor('#ffffff').fontSize(16).text('SmartTrack Command Center', 36, 22);
     doc.fillColor('#34d399').fontSize(10).text('Live Database Inventory & Audit Report', 36, 42);
-    doc.fillColor('#94a3b8').fontSize(8).text(`Petsa: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`, 380, 42);
+    doc.fillColor('#94a3b8').fontSize(8).text(`Date: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`, 380, 42);
 
     doc.moveDown(3);
 
-    // Kalkulasyon ng Summary Metrics
-    let totalBorrowed = 0;
-    let totalReturned = 0;
-    let totalPending = 0;
-
-    tickets.forEach(t => {
+    let totalBorrowed = 0, totalReturned = 0, totalPending = 0;
+    (tickets || []).forEach(t => {
       const qty = parseInt(t.quantity || 1, 10);
-      if (t.status === 'APPROVED' || t.status === 'RETURNED') totalBorrowed += qty;
+      if (t.status === 'APPROVED' || t.status === 'CLAIMED' || t.status === 'RETURNED') totalBorrowed += qty;
       if (t.status === 'RETURNED') totalReturned += qty;
       if (t.status === 'PENDING') totalPending += qty;
     });
 
-    // Summary Box
-    doc.fillColor('#0f172a').fontSize(11).text('BUOD NG MGA KAGAMITAN:', 36, 85);
+    doc.fillColor('#0f172a').fontSize(11).text('EQUIPMENT SUMMARY:', 36, 85);
     doc.fontSize(9)
-       .text(`• Kabuuang Nahiram (Approved & Returned): ${totalBorrowed}`, 46, 102)
-       .text(`• Kabuuang Nabalik (Good / Audited): ${totalReturned}`, 46, 116)
-       .text(`• Kasalukuyang Hawak Pa ng Humiram: ${totalBorrowed - totalReturned}`, 46, 130)
-       .text(`• Nakabinbing Kahilingan (Pending): ${totalPending}`, 46, 144);
+       .text(`• Total Dispatched (Claimed/Returned): ${totalBorrowed}`, 46, 102)
+       .text(`• Total Returned (Good/Audited): ${totalReturned}`, 46, 116)
+       .text(`• Currently in Custody: ${totalBorrowed - totalReturned}`, 46, 130)
+       .text(`• Pending Requests: ${totalPending}`, 46, 144);
 
-    // Table Header
     let y = 175;
     doc.rect(36, y - 5, 523, 20).fill('#1e293b');
     doc.fillColor('#ffffff').fontSize(8);
     doc.text('ID', 42, y);
-    doc.text('HUMIRAM', 75, y);
+    doc.text('BORROWER', 75, y);
     doc.text('ITEM', 190, y);
     doc.text('QTY', 315, y);
-    doc.text('PETSA NAHIRAM', 345, y);
-    doc.text('PETSA NABALIK', 445, y);
+    doc.text('DATE BORROWED', 345, y);
+    doc.text('DATE RETURNED', 445, y);
     doc.text('STATUS', 525, y);
 
     y += 24;
@@ -538,13 +556,11 @@ app.get('/api/admin/records-pdf', async (req, res) => {
       return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-PH', { month: 'numeric', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' });
     };
 
-    // Table Rows
-    tickets.forEach(t => {
+    (tickets || []).forEach(t => {
       if (y > 770) {
         doc.addPage();
         y = 40;
       }
-
       doc.fillColor('#0f172a').fontSize(8);
       doc.text(`#${t.id}`, 42, y);
       doc.text(String(t.requester_name || 'N/A').slice(0, 18), 75, y);
@@ -563,7 +579,8 @@ app.get('/api/admin/records-pdf', async (req, res) => {
     res.status(500).send('Error generating PDF: ' + err.message);
   }
 });
-// Serves records.html directly from Render
+
+// HTML Records Viewer
 app.get('/records', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -592,7 +609,7 @@ app.get('/records', (req, res) => {
     .dates-box { background: #070d1e; border: 1px solid #1e293b; border-radius: 10px; padding: 10px; margin: 10px 0; font-size: 0.78rem; display: flex; flex-direction: column; gap: 6px; }
     .date-row { display: flex; justify-content: space-between; }
     .status-pill { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; }
-    .status-APPROVED { background: #064e3b; color: #34d399; }
+    .status-APPROVED, .status-CLAIMED { background: #064e3b; color: #34d399; }
     .status-RETURNED { background: #1e3a8a; color: #93c5fd; }
     .status-PENDING { background: #78350f; color: #fde047; }
     .status-REJECTED { background: #7f1d1d; color: #fecaca; }
@@ -607,7 +624,7 @@ app.get('/records', (req, res) => {
     </div>
 
     <div class="metrics-grid">
-      <div class="metric-card"><div class="metric-label">Borrowed Items</div><div class="metric-val" style="color:#f59e0b;" id="count-borrowed">0</div></div>
+      <div class="metric-card"><div class="metric-label">Dispatched Items</div><div class="metric-val" style="color:#f59e0b;" id="count-borrowed">0</div></div>
       <div class="metric-card"><div class="metric-label">Returned Items</div><div class="metric-val" style="color:#10b981;" id="count-returned">0</div></div>
       <div class="metric-card"><div class="metric-label">Active / In Custody</div><div class="metric-val" style="color:#38bdf8;" id="count-active">0</div></div>
       <div class="metric-card"><div class="metric-label">Total Transactions</div><div class="metric-val" style="color:#fff;" id="count-total">0</div></div>
@@ -634,7 +651,7 @@ app.get('/records', (req, res) => {
         let borrowed = 0, returned = 0;
         tickets.forEach(t => {
           const q = parseInt(t.quantity || 1, 10);
-          if (t.status === 'APPROVED' || t.status === 'RETURNED') borrowed += q;
+          if (t.status === 'APPROVED' || t.status === 'CLAIMED' || t.status === 'RETURNED') borrowed += q;
           if (t.status === 'RETURNED') returned += q;
         });
 
@@ -710,155 +727,6 @@ app.get('/records', (req, res) => {
 </body>
 </html>`);
 });
+
+// START SERVER
 app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
-const PDFDocument = require('pdfkit');
-
-// ENDPOINT PARA SA DIRECT PDF DOWNLOAD/VIEW PAG-SCAN NG QR CODE
-app.get('/api/admin/records-pdf', async (req, res) => {
-  try {
-    // 1. Kuhanin ang totoong data mula sa iyong database (hal. Supabase / PostgreSQL)
-    // Palitan ito base sa query method mo (hal. const { data: tickets } = await supabase.from('requests').select('*'))
-    const { data: tickets, error } = await supabase
-      .from('requests')
-      .select('*')
-      .order('id', { ascending: false });
-
-    if (error) throw error;
-
-    // 2. I-set ang response headers para mismong PDF file ang mabuksan sa browser
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="SmartTrack_Item_Records.pdf"');
-
-    const doc = new PDFDocument({ margin: 40, size: 'A4' });
-    doc.pipe(res);
-
-    // 3. Header & Pamagat
-    doc.fontSize(18).text('SmartTrack Command Center', { align: 'center' });
-    doc.fontSize(11).fillColor('#64748b').text('Live Inventory & Custodian Item Audit Report', { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(9).text(`Petsa ng Pagkagawa: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`, { align: 'right' });
-    doc.moveDown();
-
-    // 4. Kalkulahin ang eksaktong bilang mula sa database
-    let totalBorrowed = 0;
-    let totalReturned = 0;
-    let totalPending = 0;
-
-    (tickets || []).forEach(t => {
-      const q = parseInt(t.quantity || 1, 10);
-      if (t.status === 'APPROVED' || t.status === 'RETURNED') totalBorrowed += q;
-      if (t.status === 'RETURNED') totalReturned += q;
-      if (t.status === 'PENDING') totalPending += q;
-    });
-
-    // Summary Box
-    doc.fillColor('#000').fontSize(11).text('BUOD NG MGA KAGAMITAN:', { underline: true });
-    doc.fontSize(10)
-       .text(`• Kabuuang Nahiram (Approved/Returned): ${totalBorrowed}`)
-       .text(`• Kabuuang Nabalik (Good/Audited): ${totalReturned}`)
-       .text(`• Kasalukuyang Hawak Pa ng Humiram: ${totalBorrowed - totalReturned}`)
-       .text(`• Nakabinbing Kahilingan (Pending): ${totalPending}`);
-    doc.moveDown();
-
-    // 5. Talaan ng mga Transaksyon (Table Header)
-    doc.fontSize(10).fillColor('#000').text('MGA DETALYE NG TRANSACTION:', { underline: true });
-    doc.moveDown(0.5);
-
-    const startX = 40;
-    let currentY = doc.y;
-
-    doc.fontSize(8).fillColor('#334155');
-    doc.text('TICKET', startX, currentY);
-    doc.text('HUMIRAM', startX + 50, currentY);
-    doc.text('ITEM', startX + 150, currentY);
-    doc.text('QTY', startX + 270, currentY);
-    doc.text('PETSA NAHIRAM', startX + 300, currentY);
-    doc.text('PETSA NABALIK', startX + 410, currentY);
-    doc.text('STATUS', startX + 490, currentY);
-
-    doc.moveTo(startX, currentY + 12).lineTo(560, currentY + 12).stroke('#cbd5e1');
-    currentY += 18;
-
-    // Helper formatter para sa tumpak na petsa
-    const formatLiveDate = (d) => {
-      if (!d) return '—';
-      const dt = new Date(d);
-      return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-PH', { month: 'numeric', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-    };
-
-    // 6. Paglagay ng bawat row galing sa database
-    (tickets || []).forEach(t => {
-      if (currentY > 750) { // Page break kung mahaba ang listahan
-        doc.addPage();
-        currentY = 40;
-      }
-
-      doc.fillColor('#0f172a').fontSize(8);
-      doc.text(`#${t.id}`, startX, currentY);
-      doc.text(String(t.requester_name || 'N/A').slice(0, 18), startX + 50, currentY);
-      doc.text(String(t.item_name || 'Item').slice(0, 22), startX + 150, currentY);
-      doc.text(String(t.quantity || 1), startX + 270, currentY);
-      doc.text(formatLiveDate(t.borrowed_at), startX + 300, currentY);
-      doc.text(formatLiveDate(t.returned_at), startX + 410, currentY);
-      doc.text(String(t.status || ''), startX + 490, currentY);
-
-      currentY += 16;
-    });
-
-    doc.end();
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Error sa pag-generate ng live database PDF report: ' + err.message);
-  }
-  // POST /api/admin/inventory/deduct
-app.post('/api/admin/inventory/deduct', async (req, res) => {
-  try {
-    const { asset_tag, item_name, quantity, ticket_id } = req.body;
-    const qtyToDeduct = parseInt(quantity, 10) || 1;
-
-    // 1. Find equipment by asset tag or item name
-    let query = supabase.from('inventory').select('*');
-    if (asset_tag) {
-      query = query.eq('asset_tag', asset_tag);
-    } else if (item_name) {
-      query = query.ilike('name', `%${item_name}%`);
-    }
-
-    const { data: items, error: fetchErr } = await query;
-    if (fetchErr) throw fetchErr;
-
-    let remainingStock = 'Updated';
-
-    if (items && items.length > 0) {
-      const currentItem = items[0];
-      const currentStock = parseInt(currentItem.quantity, 10) || 0;
-      remainingStock = Math.max(0, currentStock - qtyToDeduct);
-
-      // Deduct quantity in catalog table
-      await supabase
-        .from('inventory')
-        .update({ quantity: remainingStock })
-        .eq('id', currentItem.id);
-    }
-
-    // 2. Mark ticket as DISPATCHED / APPROVED with borrow timestamp
-    if (ticket_id) {
-      await supabase
-        .from('requests')
-        .update({
-          status: 'APPROVED',
-          borrowed_at: new Date().toISOString()
-        })
-        .eq('id', ticket_id);
-    }
-
-    return res.json({
-      success: true,
-      remaining_stock: remainingStock
-    });
-  } catch (err) {
-    console.error('Inventory deduct error:', err);
-    return res.status(500).json({ error: err.message || 'Error updating inventory' });
-  }
-});
-});
