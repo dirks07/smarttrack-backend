@@ -359,7 +359,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
       const { data: ticketRow } = await supabase
         .from('requests')
         .select('*')
-        .eq('id', ticket_id)
+        .eq('id', parseInt(ticket_id, 10))
         .maybeSingle();
 
       if (ticketRow && ticketRow.item_id) {
@@ -418,7 +418,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
           borrowed_at: new Date().toISOString(),
           status: 'CLAIMED' 
         })
-        .eq('id', ticket_id);
+        .eq('id', parseInt(ticket_id, 10));
     }
 
     return res.json({ 
@@ -469,7 +469,7 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
     updateFields.borrowed_at = new Date().toISOString();
   }
 
-  const { data, error } = await supabase.from('requests').update(updateFields).eq('id', id).select().single();
+  const { data, error } = await supabase.from('requests').update(updateFields).eq('id', parseInt(id, 10)).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true, ticket: data });
 });
@@ -477,16 +477,29 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
 // PERMANENTLY DELETE REQUEST FROM DATABASE & MOBILE
 app.delete('/api/admin/requests/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const rawId = req.params.id;
+    const ticketId = parseInt(rawId, 10);
 
-    const { error } = await supabase
+    if (isNaN(ticketId)) {
+      return res.status(400).json({ error: 'Invalid numeric ticket ID.' });
+    }
+
+    const { data, error } = await supabase
       .from('requests')
       .delete()
-      .eq('id', id);
+      .eq('id', ticketId)
+      .select();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase delete error:', error);
+      throw error;
+    }
 
-    return res.json({ success: true, message: `Ticket #${id} deleted from database.` });
+    return res.json({ 
+      success: true, 
+      message: `Ticket #${ticketId} permanently removed.`,
+      deleted: data
+    });
   } catch (err) {
     console.error('Delete request error:', err);
     return res.status(500).json({ error: err.message || 'Failed to delete ticket.' });
@@ -502,7 +515,7 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
       return res.status(400).json({ error: 'Please specify if the item is in good or bad condition.' });
     }
 
-    const { data: ticket, error: fetchErr } = await supabase.from('requests').select('*').eq('id', id).single();
+    const { data: ticket, error: fetchErr } = await supabase.from('requests').select('*').eq('id', parseInt(id, 10)).single();
     if (fetchErr || !ticket) return res.status(404).json({ error: 'Ticket not found.' });
 
     const { data: updatedTicket, error: updateErr } = await supabase
@@ -513,7 +526,7 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
         item_condition,
         admin_remarks: admin_remarks || ''
       })
-      .eq('id', id)
+      .eq('id', parseInt(id, 10))
       .select()
       .single();
 
