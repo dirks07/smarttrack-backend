@@ -171,28 +171,33 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
     return res.status(500).json({ error: 'Server error deducting catalog quantity.' });
   }
 });
-app.get('/api/public/verify-email', async (req, res) => {
+// GET /api/inventory/item?tag=... or ?name=...
+app.get('/api/inventory/item', async (req, res) => {
   try {
-    const { token } = req.query;
-    if (!token || !pendingBorrowerTokens.has(token)) {
-      return res.status(400).send(`<h2>Link Expired or Invalid</h2>`);
+    const { tag, name } = req.query;
+    let query = supabase.from('inventory').select('*');
+
+    if (tag) {
+      query = query.eq('asset_tag', tag);
+    } else if (name) {
+      query = query.ilike('name', `%${name}%`);
+    } else {
+      return res.status(400).json({ error: 'Provide tag or name' });
     }
 
-    const pending = pendingBorrowerTokens.get(token);
-    if (Date.now() > pending.expiresAt) {
-      pendingBorrowerTokens.delete(token);
-      return res.status(400).send(`<h2>Token Expired</h2>`);
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Item not found in catalog' });
     }
 
-    const { error: insertError } = await supabase.from('borrowers').insert([{
-      full_name: pending.full_name,
-      identifier: pending.identifier,
-      email: pending.email,
-      role: pending.role,
-      department: pending.department,
-      password: pending.password,
-      created_at: new Date().toISOString()
-    }]);
+    // Return the single matched equipment row
+    return res.json(data[0]);
+  } catch (err) {
+    console.error('Fetch live inventory error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve item stock' });
+  }
+});
 
     if (insertError) throw insertError;
     pendingBorrowerTokens.delete(token);
