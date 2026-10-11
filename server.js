@@ -805,4 +805,55 @@ app.get('/api/admin/records-pdf', async (req, res) => {
     console.error(err);
     res.status(500).send('Error sa pag-generate ng live database PDF report: ' + err.message);
   }
+  // POST /api/admin/inventory/deduct
+app.post('/api/admin/inventory/deduct', async (req, res) => {
+  try {
+    const { asset_tag, item_name, quantity, ticket_id } = req.body;
+    const qtyToDeduct = parseInt(quantity, 10) || 1;
+
+    // 1. Find equipment by asset tag or item name
+    let query = supabase.from('inventory').select('*');
+    if (asset_tag) {
+      query = query.eq('asset_tag', asset_tag);
+    } else if (item_name) {
+      query = query.ilike('name', `%${item_name}%`);
+    }
+
+    const { data: items, error: fetchErr } = await query;
+    if (fetchErr) throw fetchErr;
+
+    let remainingStock = 'Updated';
+
+    if (items && items.length > 0) {
+      const currentItem = items[0];
+      const currentStock = parseInt(currentItem.quantity, 10) || 0;
+      remainingStock = Math.max(0, currentStock - qtyToDeduct);
+
+      // Deduct quantity in catalog table
+      await supabase
+        .from('inventory')
+        .update({ quantity: remainingStock })
+        .eq('id', currentItem.id);
+    }
+
+    // 2. Mark ticket as DISPATCHED / APPROVED with borrow timestamp
+    if (ticket_id) {
+      await supabase
+        .from('requests')
+        .update({
+          status: 'APPROVED',
+          borrowed_at: new Date().toISOString()
+        })
+        .eq('id', ticket_id);
+    }
+
+    return res.json({
+      success: true,
+      remaining_stock: remainingStock
+    });
+  } catch (err) {
+    console.error('Inventory deduct error:', err);
+    return res.status(500).json({ error: err.message || 'Error updating inventory' });
+  }
+});
 });
