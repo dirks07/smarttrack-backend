@@ -271,7 +271,7 @@ app.get('/api/inventory/item', async (req, res) => {
     let query = supabase.from('inventory').select('*');
 
     if (tag) {
-      query = query.or(`asset_tag.eq.${tag},asset_code.eq.${tag}`);
+      query = query.or(`asset_code.eq.${tag},asset_tag.eq.${tag}`);
     } else if (name) {
       query = query.ilike('name', `%${name}%`);
     } else {
@@ -291,43 +291,52 @@ app.get('/api/inventory/item', async (req, res) => {
   }
 });
 
+// Admin Add or Restock Equipment (Populates both asset_code and asset_tag)
 app.post('/api/admin/inventory/add', async (req, res) => {
   try {
-    const { asset_tag, name, category, quantity } = req.body;
+    const { asset_tag, asset_code, name, category, quantity } = req.body;
     const qty = parseInt(quantity, 10);
 
     if (!name || isNaN(qty) || qty <= 0) {
       return res.status(400).json({ error: 'Item name and valid quantity are required.' });
     }
 
-    if (asset_tag) {
-      const { data: existing } = await supabase
+    // Resolve unified tag code
+    const resolvedCode = (asset_code || asset_tag || '').trim() || `CDM-EQ-${Date.now().toString(36).toUpperCase()}`;
+
+    // 1. Check if asset already exists to replenish counts
+    const { data: existing } = await supabase
+      .from('inventory')
+      .select('*')
+      .or(`asset_code.eq.${resolvedCode},asset_tag.eq.${resolvedCode}`)
+      .maybeSingle();
+
+    if (existing) {
+      const updatedQty = (parseInt(existing.quantity, 10) || 0) + qty;
+      const updatedAvail = (parseInt(existing.available_quantity, 10) || parseInt(existing.quantity, 10) || 0) + qty;
+
+      const { data: updated, error: updateErr } = await supabase
         .from('inventory')
-        .select('*')
-        .eq('asset_tag', asset_tag)
-        .maybeSingle();
+        .update({ 
+          quantity: updatedQty, 
+          available_quantity: updatedAvail,
+          asset_code: existing.asset_code || resolvedCode
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
 
-      if (existing) {
-        const updatedQty = existing.quantity + qty;
-        const updatedAvail = (existing.available_quantity || existing.quantity) + qty;
-
-        const { data: updated, error: updateErr } = await supabase
-          .from('inventory')
-          .update({ quantity: updatedQty, available_quantity: updatedAvail })
-          .eq('id', existing.id)
-          .select()
-          .single();
-
-        if (updateErr) throw updateErr;
-        return res.json({ success: true, item: updated, message: `Restocked ${qty} units of ${name}.` });
-      }
+      if (updateErr) throw updateErr;
+      return res.json({ success: true, item: updated, message: `Restocked ${qty} units of ${name}. New total: ${updatedQty}.` });
     }
 
+    // 2. Insert new item (always providing asset_code and asset_tag)
     const { data: newItem, error: insertErr } = await supabase
       .from('inventory')
       .insert([{
-        asset_tag: asset_tag || `TAG-${Date.now().toString(36).toUpperCase()}`,
-        name,
+        asset_code: resolvedCode,
+        asset_tag: resolvedCode,
+        name: name.trim(),
         category: category || 'Equipment',
         quantity: qty,
         available_quantity: qty,
@@ -337,17 +346,17 @@ app.post('/api/admin/inventory/add', async (req, res) => {
       .single();
 
     if (insertErr) throw insertErr;
-    res.json({ success: true, item: newItem, message: `Successfully added ${name} to inventory.` });
+    res.json({ success: true, item: newItem, message: `Successfully registered ${name} (Stock: ${qty}).` });
   } catch (err) {
     console.error('Inventory error:', err);
     res.status(500).json({ error: err.message || 'Failed to add item.' });
   }
 });
 
-// DEDUCT FROM INVENTORY UPON DISPATCH
+// Deduct From Inventory Upon Dispatch
 app.post('/api/admin/inventory/deduct', async (req, res) => {
   try {
-    const { asset_tag, item_name, item_id, quantity, ticket_id } = req.body;
+    const { asset_tag, asset_code, item_name, item_id, quantity, ticket_id } = req.body;
     const qtyToDeduct = parseInt(quantity, 10) || 1;
 
     let targetItem = null;
@@ -374,11 +383,12 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
       targetItem = byId;
     }
 
-    if (!targetItem && asset_tag) {
+    const checkCode = asset_code || asset_tag;
+    if (!targetItem && checkCode) {
       const { data: byTag } = await supabase
         .from('inventory')
         .select('*')
-        .or(`asset_tag.eq.${asset_tag},asset_code.eq.${asset_tag}`)
+        .or(`asset_code.eq.${checkCode},asset_tag.eq.${checkCode}`)
         .maybeSingle();
       targetItem = byTag;
     }
@@ -472,7 +482,7 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
   res.json({ success: true, ticket: data });
 });
 
-// PERMANENTLY DELETE REQUEST FROM DATABASE & MOBILE
+// Permanently Delete Request
 app.delete('/api/admin/requests/:id', async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -504,7 +514,7 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
   }
 });
 
-// PROCESS RETURN & RESTORE CATALOG INVENTORY
+// Process Return & Restore Catalog Stock
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const { id } = req.params;
@@ -513,6 +523,7 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
     const condition = item_condition || 'Good Condition';
     const numericTicketId = parseInt(id, 10);
 
+    // 1. Fetch ticket
     const { data: ticket, error: fetchErr } = await supabase
       .from('requests')
       .select('*')
@@ -523,14 +534,14 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found.' });
     }
 
-    // 1. Mark ticket as RETURNED
+    // 2. Mark ticket as RETURNED
     const { data: updatedTicket, error: updateErr } = await supabase
       .from('requests')
       .update({
         status: 'RETURNED',
         returned_at: new Date().toISOString(),
         item_condition: condition,
-        admin_remarks: admin_remarks || 'Returned via Custodian Terminal'
+        admin_remarks: admin_remarks || 'Item returned via Admin Desk'
       })
       .eq('id', numericTicketId)
       .select()
@@ -540,7 +551,7 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
 
     let restoredStock = null;
 
-    // 2. If condition is good, increment catalog stock back
+    // 3. Restore inventory quantity if good condition
     if (condition.toLowerCase().includes('good')) {
       let targetInv = null;
 
@@ -570,7 +581,7 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
       success: true, 
       ticket: updatedTicket, 
       restored_stock: restoredStock,
-      message: `Return recorded successfully.${restoredStock !== null ? ` Stock restored to ${restoredStock}.` : ''}` 
+      message: `Return recorded successfully.${restoredStock !== null ? ` Catalog stock restored to ${restoredStock}.` : ''}` 
     });
 
   } catch (err) {
