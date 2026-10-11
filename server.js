@@ -474,6 +474,25 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
   res.json({ success: true, ticket: data });
 });
 
+// PERMANENTLY DELETE REQUEST FROM DATABASE & MOBILE
+app.delete('/api/admin/requests/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { error } = await supabase
+      .from('requests')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    return res.json({ success: true, message: `Ticket #${id} deleted from database.` });
+  } catch (err) {
+    console.error('Delete request error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to delete ticket.' });
+  }
+});
+
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const { id } = req.params;
