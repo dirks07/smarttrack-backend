@@ -499,6 +499,153 @@ app.get('/api/admin/records-pdf', async (req, res) => {
     res.status(500).send('Error generating PDF: ' + err.message);
   }
 });
+// Serves records.html directly from Render
+app.get('/records', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartTrack Live Audit Records</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #070d1e; color: #e2e8f0; min-height: 100vh; padding: 20px 14px; }
+    .container { max-width: 650px; margin: 0 auto; }
+    .header-box { background: #0b1329; border: 1px solid #1e293b; border-radius: 18px; padding: 20px; text-align: center; margin-bottom: 18px; box-shadow: 0 10px 25px rgba(0,0,0,0.35); }
+    .header-box h1 { font-size: 1.35rem; color: #fff; margin-bottom: 6px; }
+    .header-box p { font-size: 0.8rem; color: #94a3b8; }
+    .btn-export { background: #059669; border: none; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 0.82rem; font-weight: 700; cursor: pointer; margin-top: 14px; }
+    .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 20px; }
+    .metric-card { background: #0b1329; border: 1px solid #1e293b; border-radius: 14px; padding: 14px; text-align: center; }
+    .metric-label { font-size: 0.7rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; }
+    .metric-val { font-size: 1.5rem; font-weight: 800; margin-top: 4px; }
+    .record-card { background: #0b1329; border: 1px solid #1e293b; border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+    .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+    .borrower-name { font-size: 1rem; font-weight: 700; color: #fff; }
+    .ticket-badge { background: #1e293b; border: 1px solid #334155; padding: 2px 7px; border-radius: 6px; font-size: 0.75rem; color: #cbd5e1; }
+    .dates-box { background: #070d1e; border: 1px solid #1e293b; border-radius: 10px; padding: 10px; margin: 10px 0; font-size: 0.78rem; display: flex; flex-direction: column; gap: 6px; }
+    .date-row { display: flex; justify-content: space-between; }
+    .status-pill { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; }
+    .status-APPROVED { background: #064e3b; color: #34d399; }
+    .status-RETURNED { background: #1e3a8a; color: #93c5fd; }
+    .status-PENDING { background: #78350f; color: #fde047; }
+    .status-REJECTED { background: #7f1d1d; color: #fecaca; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-box">
+      <h1>SmartTrack Live Audit Records</h1>
+      <p id="time-label">Syncing directly with live database...</p>
+      <button type="button" class="btn-export" onclick="downloadPdf()">Save Records as PDF</button>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-card"><div class="metric-label">Borrowed Items</div><div class="metric-val" style="color:#f59e0b;" id="count-borrowed">0</div></div>
+      <div class="metric-card"><div class="metric-label">Returned Items</div><div class="metric-val" style="color:#10b981;" id="count-returned">0</div></div>
+      <div class="metric-card"><div class="metric-label">Active / In Custody</div><div class="metric-val" style="color:#38bdf8;" id="count-active">0</div></div>
+      <div class="metric-card"><div class="metric-label">Total Transactions</div><div class="metric-val" style="color:#fff;" id="count-total">0</div></div>
+    </div>
+
+    <div id="records-list"><div style="text-align:center; color:#64748b; padding:40px 0;">Loading items...</div></div>
+  </div>
+
+  <script>
+    let tickets = [];
+
+    function formatTime(d) {
+      if (!d) return '—';
+      const parsed = new Date(d);
+      return isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString('en-PH', { year:'numeric', month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+    }
+
+    async function loadData() {
+      try {
+        const res = await fetch('/api/admin/all-requests');
+        tickets = await res.json();
+        document.getElementById('time-label').innerText = 'As of: ' + new Date().toLocaleString('en-PH');
+
+        let borrowed = 0, returned = 0;
+        tickets.forEach(t => {
+          const q = parseInt(t.quantity || 1, 10);
+          if (t.status === 'APPROVED' || t.status === 'RETURNED') borrowed += q;
+          if (t.status === 'RETURNED') returned += q;
+        });
+
+        document.getElementById('count-borrowed').innerText = borrowed;
+        document.getElementById('count-returned').innerText = returned;
+        document.getElementById('count-active').innerText = borrowed - returned;
+        document.getElementById('count-total').innerText = tickets.length;
+
+        const list = document.getElementById('records-list');
+        if (tickets.length === 0) {
+          list.innerHTML = '<div style="text-align:center; color:#64748b; padding:30px;">No transaction records found.</div>';
+          return;
+        }
+
+        list.innerHTML = tickets.map(t => \`
+          <div class="record-card">
+            <div class="card-top">
+              <div>
+                <div class="borrower-name">\${t.requester_name || 'N/A'}</div>
+                <div style="font-size:0.75rem; color:#94a3b8;">\${t.role || 'User'} • \${t.identifier || 'No ID'}</div>
+              </div>
+              <span class="ticket-badge">#\${t.id}</span>
+            </div>
+            <div style="font-size:0.85rem; margin:8px 0;">
+              Item: <strong style="color:#fff;">\${t.item_name}</strong> (x\${t.quantity || 1})
+            </div>
+            <div class="dates-box">
+              <div class="date-row"><span style="color:#94a3b8;">Date Borrowed:</span><strong style="color:#fff;">\${formatTime(t.borrowed_at)}</strong></div>
+              <div class="date-row"><span style="color:#94a3b8;">Date Returned:</span><strong style="color:#fff;">\${formatTime(t.returned_at)}</strong></div>
+            </div>
+            <span class="status-pill status-\${t.status}">\${t.status}</span>
+          </div>
+        \`).join('');
+      } catch (err) {
+        document.getElementById('records-list').innerHTML = '<div style="color:#ef4444; text-align:center; padding:30px;">Failed to load records: ' + err.message + '</div>';
+      }
+    }
+
+    function downloadPdf() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+      doc.setFillColor(11, 17, 30);
+      doc.rect(0, 0, 612, 60, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(15);
+      doc.setFont('helvetica', 'bold');
+      doc.text('SmartTrack Inventory Audit Report', 30, 36);
+
+      const rows = tickets.map(t => [
+        '#' + t.id,
+        t.requester_name || 'N/A',
+        t.item_name,
+        t.quantity || 1,
+        formatTime(t.borrowed_at),
+        formatTime(t.returned_at),
+        t.status
+      ]);
+
+      doc.autoTable({
+        startY: 85,
+        margin: { left: 30, right: 30 },
+        head: [['ID', 'Borrower', 'Item', 'Qty', 'Date Borrowed', 'Date Returned', 'Status']],
+        body: rows,
+        theme: 'grid',
+        headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255] },
+        styles: { fontSize: 8, cellPadding: 4 }
+      });
+      doc.save('SmartTrack_Records_' + Date.now() + '.pdf');
+    }
+
+    window.onload = loadData;
+  </script>
+</body>
+</html>`);
+});
 app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
 const PDFDocument = require('pdfkit');
 
