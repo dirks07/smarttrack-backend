@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const PDFDocument = require('pdfkit');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -322,7 +321,7 @@ app.post('/api/admin/inventory/add', async (req, res) => {
           .single();
 
         if (updateErr) throw updateErr;
-        return res.json({ success: true, item: updated, message: `Restocked ${qty} units of${name}.` });
+        return res.json({ success: true, item: updated, message: `Restocked ${qty} units of ${name}.` });
       }
     }
 
@@ -356,7 +355,6 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
     let targetItem = null;
     let resolvedItemId = item_id;
 
-    // 1. If ticket_id exists, inspect ticket row to retrieve direct item_id
     if (ticket_id) {
       const { data: ticketRow } = await supabase
         .from('requests')
@@ -369,7 +367,6 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
       }
     }
 
-    // 2. Locate target item in database
     if (resolvedItemId) {
       const { data: byId } = await supabase
         .from('inventory')
@@ -401,11 +398,9 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
       return res.status(404).json({ error: 'Item not found in catalog.' });
     }
 
-    // 3. Compute remaining stock
     const currentStock = parseInt(targetItem.quantity, 10) || 0;
     const newStock = Math.max(0, currentStock - qtyToDeduct);
 
-    // 4. Update catalog in Supabase
     const { error: updateErr } = await supabase
       .from('inventory')
       .update({ 
@@ -416,7 +411,6 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
 
     if (updateErr) throw updateErr;
 
-    // 5. Update request status to CLAIMED
     if (ticket_id) {
       await supabase
         .from('requests')
@@ -480,7 +474,6 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
   res.json({ success: true, ticket: data });
 });
 
-// Admin Return Inspection & Condition Audit
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const { id } = req.params;
@@ -507,7 +500,6 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
 
     if (updateErr) throw updateErr;
 
-    // Restore inventory stock if item is returned in good condition
     if (ticket.item_id && item_condition.includes('Good')) {
       const { data: inv } = await supabase.from('inventory').select('*').eq('id', ticket.item_id).maybeSingle();
       if (inv) {
@@ -527,92 +519,5 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
   }
 });
 
-// PDF Report Generator
-app.get('/api/admin/records-pdf', async (req, res) => {
-  try {
-    const { data: tickets, error } = await supabase.from('requests').select('*').order('id', { ascending: false });
-    if (error) throw error;
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="SmartTrack_Audit_Records.pdf"');
-
-    const doc = new PDFDocument({ margin: 36, size: 'A4' });
-    doc.pipe(res);
-
-    doc.rect(0, 0, 595.28, 65).fill('#0b111e');
-    doc.fillColor('#ffffff').fontSize(16).text('SmartTrack Command Center', 36, 22);
-    doc.fillColor('#34d399').fontSize(10).text('Live Database Inventory & Audit Report', 36, 42);
-    doc.fillColor('#94a3b8').fontSize(8).text(`Date: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`, 380, 42);
-
-    doc.moveDown(3);
-
-    let totalBorrowed = 0, totalReturned = 0, totalPending = 0;
-    (tickets || []).forEach(t => {
-      const qty = parseInt(t.quantity || 1, 10);
-      if (t.status === 'APPROVED' || t.status === 'CLAIMED' || t.status === 'RETURNED') totalBorrowed += qty;
-      if (t.status === 'RETURNED') totalReturned += qty;
-      if (t.status === 'PENDING') totalPending += qty;
-    });
-
-    doc.fillColor('#0f172a').fontSize(11).text('EQUIPMENT SUMMARY:', 36, 85);
-    doc.fontSize(9)
-       .text(`• Total Dispatched (Claimed/Returned): ${totalBorrowed}`, 46, 102)
-       .text(`• Total Returned (Good/Audited): ${totalReturned}`, 46, 116)
-       .text(`• Currently in Custody: ${totalBorrowed - totalReturned}`, 46, 130)
-       .text(`• Pending Requests: ${totalPending}`, 46, 144);
-
-    let y = 175;
-    doc.rect(36, y - 5, 523, 20).fill('#1e293b');
-    doc.fillColor('#ffffff').fontSize(8);
-    doc.text('ID', 42, y);
-    doc.text('BORROWER', 75, y);
-    doc.text('ITEM', 190, y);
-    doc.text('QTY', 315, y);
-    doc.text('DATE BORROWED', 345, y);
-    doc.text('DATE RETURNED', 445, y);
-    doc.text('STATUS', 525, y);
-
-    y += 24;
-
-    const formatDate = (raw) => {
-      if (!raw) return '—';
-      const d = new Date(raw);
-      return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-PH', { month: 'numeric', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-    };
-
-    (tickets || []).forEach(t => {
-      if (y > 770) {
-        doc.addPage();
-        y = 40;
-      }
-      doc.fillColor('#0f172a').fontSize(8);
-      doc.text(`#${t.id}`, 42, y);
-      doc.text(String(t.requester_name || 'N/A').slice(0, 18), 75, y);
-      doc.text(String(t.item_name || 'Item').slice(0, 22), 190, y);
-      doc.text(String(t.quantity || 1), 315, y);
-      doc.text(formatDate(t.borrowed_at), 345, y);
-      doc.text(formatDate(t.returned_at), 445, y);
-      doc.text(String(t.status || ''), 525, y);
-
-      doc.moveTo(36, y + 12).lineTo(559, y + 12).stroke('#e2e8f0');
-      y += 18;
-    });
-
-    doc.end();
-  } catch (err) {
-    res.status(500).send('Error generating PDF: ' + err.message);
-  }
-});
-
-// HTML Records Viewer
-app.get('/records', (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SmartTrack Live Audit Records</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans
+// START SERVER
+app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
