@@ -303,7 +303,6 @@ app.post('/api/admin/inventory/add', async (req, res) => {
 
     const resolvedCode = (asset_code || asset_tag || '').trim() || `CDM-EQ-${Date.now().toString(36).toUpperCase()}`;
 
-    // Check if asset already exists to replenish counts
     const { data: existing } = await supabase
       .from('inventory')
       .select('*')
@@ -329,7 +328,6 @@ app.post('/api/admin/inventory/add', async (req, res) => {
       return res.json({ success: true, item: updated, message: `Restocked ${qty} units of ${name}. New total: ${updatedQty}.` });
     }
 
-    // Insert new item
     const { data: newItem, error: insertErr } = await supabase
       .from('inventory')
       .insert([{
@@ -526,7 +524,7 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
   }
 });
 
-// PROCESS RETURN & RESTORE INVENTORY (EXPLICIT INTEGER CAST & STATUS UPDATE)
+// PROCESS RETURN & RESTORE INVENTORY
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -539,7 +537,6 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
       return res.status(400).json({ error: 'Invalid numeric ticket ID.' });
     }
 
-    // 1. Fetch ticket first
     const { data: ticket, error: fetchErr } = await supabase
       .from('requests')
       .select('*')
@@ -550,7 +547,6 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
       return res.status(404).json({ error: `Ticket #${ticketId} not found.` });
     }
 
-    // 2. Explicitly update status to RETURNED
     const { data: updatedRows, error: updateErr } = await supabase
       .from('requests')
       .update({
@@ -569,7 +565,6 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
 
     const updatedTicket = updatedRows && updatedRows.length > 0 ? updatedRows[0] : ticket;
 
-    // 3. Restore inventory quantity if good condition
     let restoredStock = null;
     if (condition.toLowerCase().includes('good')) {
       let targetInv = null;
