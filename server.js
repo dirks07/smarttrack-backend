@@ -298,7 +298,7 @@ app.get('/api/inventory/item', async (req, res) => {
   }
 });
 
-// Admin Add or Restock Equipment (Populates both asset_code and asset_tag)
+// Admin Add or Restock Equipment
 app.post('/api/admin/inventory/add', async (req, res) => {
   try {
     const { asset_tag, asset_code, name, category, quantity } = req.body;
@@ -446,17 +446,34 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 6. REQUISITIONS & ITEM TRACKING / AUDIT
+// 6. REQUISITIONS & ITEM TRACKING (FIXED: NO INVALID 'EMAIL' COLUMN)
 // -----------------------------------------------------------------
 app.post('/api/public/requests', async (req, res) => {
-  const { item_id, item_name, quantity, purpose, requester_name, identifier, email, role, department } = req.body;
-  const { data, error } = await supabase.from('requests').insert([{
-    item_id, item_name, quantity: parseInt(quantity, 10), purpose, requester_name, identifier,
-    email: email || '', role: role || 'Student', department: department || 'BSIT', status: 'PENDING', created_at: new Date().toISOString()
-  }]).select().single();
+  try {
+    const { item_id, item_name, quantity, purpose, requester_name, identifier, role, department } = req.body;
+    
+    const { data, error } = await supabase.from('requests').insert([{
+      item_id: item_id ? parseInt(item_id, 10) : null,
+      item_name,
+      quantity: parseInt(quantity, 10) || 1,
+      purpose: purpose || 'Academic Laboratory Project',
+      requester_name,
+      identifier,
+      role: role || 'Student',
+      department: department || 'BSIT',
+      status: 'PENDING',
+      created_at: new Date().toISOString()
+    }]).select().single();
 
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true, ticket: data });
+    if (error) {
+      console.error('Supabase request insert error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ success: true, ticket: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/public/my-requests', async (req, res) => {
