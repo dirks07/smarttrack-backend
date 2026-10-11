@@ -407,7 +407,98 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
     res.status(500).json({ error: err.message || 'Failed to complete return audit.' });
   }
 });
+const PDFDocument = require('pdfkit');
 
+app.get('/api/admin/records-pdf', async (req, res) => {
+  try {
+    // 1. Kuhanin ang totoong data mula sa database
+    let tickets = [];
+    if (typeof supabase !== 'undefined') {
+      const { data, error } = await supabase.from('requests').select('*').order('id', { ascending: false });
+      if (error) throw error;
+      tickets = data || [];
+    }
+
+    // 2. HTTP Headers para mismong PDF ang kilalanin ng cellphone browser
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="SmartTrack_Audit_Records.pdf"');
+
+    const doc = new PDFDocument({ margin: 36, size: 'A4' });
+    doc.pipe(res);
+
+    // Header Design
+    doc.rect(0, 0, 595.28, 65).fill('#0b111e');
+    doc.fillColor('#ffffff').fontSize(16).text('SmartTrack Command Center', 36, 22);
+    doc.fillColor('#34d399').fontSize(10).text('Live Database Inventory & Audit Report', 36, 42);
+    doc.fillColor('#94a3b8').fontSize(8).text(`Petsa: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`, 380, 42);
+
+    doc.moveDown(3);
+
+    // Kalkulasyon ng Summary Metrics
+    let totalBorrowed = 0;
+    let totalReturned = 0;
+    let totalPending = 0;
+
+    tickets.forEach(t => {
+      const qty = parseInt(t.quantity || 1, 10);
+      if (t.status === 'APPROVED' || t.status === 'RETURNED') totalBorrowed += qty;
+      if (t.status === 'RETURNED') totalReturned += qty;
+      if (t.status === 'PENDING') totalPending += qty;
+    });
+
+    // Summary Box
+    doc.fillColor('#0f172a').fontSize(11).text('BUOD NG MGA KAGAMITAN:', 36, 85);
+    doc.fontSize(9)
+       .text(`• Kabuuang Nahiram (Approved & Returned): ${totalBorrowed}`, 46, 102)
+       .text(`• Kabuuang Nabalik (Good / Audited): ${totalReturned}`, 46, 116)
+       .text(`• Kasalukuyang Hawak Pa ng Humiram: ${totalBorrowed - totalReturned}`, 46, 130)
+       .text(`• Nakabinbing Kahilingan (Pending): ${totalPending}`, 46, 144);
+
+    // Table Header
+    let y = 175;
+    doc.rect(36, y - 5, 523, 20).fill('#1e293b');
+    doc.fillColor('#ffffff').fontSize(8);
+    doc.text('ID', 42, y);
+    doc.text('HUMIRAM', 75, y);
+    doc.text('ITEM', 190, y);
+    doc.text('QTY', 315, y);
+    doc.text('PETSA NAHIRAM', 345, y);
+    doc.text('PETSA NABALIK', 445, y);
+    doc.text('STATUS', 525, y);
+
+    y += 24;
+
+    const formatDate = (raw) => {
+      if (!raw) return '—';
+      const d = new Date(raw);
+      return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-PH', { month: 'numeric', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    };
+
+    // Table Rows
+    tickets.forEach(t => {
+      if (y > 770) {
+        doc.addPage();
+        y = 40;
+      }
+
+      doc.fillColor('#0f172a').fontSize(8);
+      doc.text(`#${t.id}`, 42, y);
+      doc.text(String(t.requester_name || 'N/A').slice(0, 18), 75, y);
+      doc.text(String(t.item_name || 'Item').slice(0, 22), 190, y);
+      doc.text(String(t.quantity || 1), 315, y);
+      doc.text(formatDate(t.borrowed_at), 345, y);
+      doc.text(formatDate(t.returned_at), 445, y);
+      doc.text(String(t.status || ''), 525, y);
+
+      doc.moveTo(36, y + 12).lineTo(559, y + 12).stroke('#e2e8f0');
+      y += 18;
+    });
+
+    doc.end();
+  } catch (err) {
+    res.status(500).send('Error generating PDF: ' + err.message);
+  }
+});
 app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
 const PDFDocument = require('pdfkit');
 
