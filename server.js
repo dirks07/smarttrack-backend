@@ -301,10 +301,9 @@ app.post('/api/admin/inventory/add', async (req, res) => {
       return res.status(400).json({ error: 'Item name and valid quantity are required.' });
     }
 
-    // Resolve unified tag code
     const resolvedCode = (asset_code || asset_tag || '').trim() || `CDM-EQ-${Date.now().toString(36).toUpperCase()}`;
 
-    // 1. Check if asset already exists to replenish counts
+    // Check if asset already exists to replenish counts
     const { data: existing } = await supabase
       .from('inventory')
       .select('*')
@@ -330,7 +329,7 @@ app.post('/api/admin/inventory/add', async (req, res) => {
       return res.json({ success: true, item: updated, message: `Restocked ${qty} units of ${name}. New total: ${updatedQty}.` });
     }
 
-    // 2. Insert new item (always providing asset_code and asset_tag)
+    // Insert new item
     const { data: newItem, error: insertErr } = await supabase
       .from('inventory')
       .insert([{
@@ -457,13 +456,20 @@ app.post('/api/public/requests', async (req, res) => {
 
 app.get('/api/public/my-requests', async (req, res) => {
   const { identifier } = req.query;
-  const { data, error } = await supabase.from('requests').select('*').eq('identifier', identifier).order('created_at', { ascending: false });
+  const { data, error } = await supabase
+    .from('requests')
+    .select('*')
+    .eq('identifier', identifier)
+    .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
 });
 
 app.get('/api/admin/all-requests', async (req, res) => {
-  const { data, error } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
+  const { data, error } = await supabase
+    .from('requests')
+    .select('*')
+    .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
 });
@@ -477,7 +483,13 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
     updateFields.borrowed_at = new Date().toISOString();
   }
 
-  const { data, error } = await supabase.from('requests').update(updateFields).eq('id', parseInt(id, 10)).select().single();
+  const { data, error } = await supabase
+    .from('requests')
+    .update(updateFields)
+    .eq('id', parseInt(id, 10))
+    .select()
+    .single();
+
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true, ticket: data });
 });
@@ -514,28 +526,32 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
   }
 });
 
-// Process Return & Restore Catalog Stock
+// PROCESS RETURN & RESTORE INVENTORY (EXPLICIT INTEGER CAST & STATUS UPDATE)
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
-    const { id } = req.params;
+    const rawId = req.params.id;
+    const ticketId = parseInt(rawId, 10);
     const { item_condition, admin_remarks } = req.body;
 
     const condition = item_condition || 'Good Condition';
-    const numericTicketId = parseInt(id, 10);
 
-    // 1. Fetch ticket
+    if (isNaN(ticketId)) {
+      return res.status(400).json({ error: 'Invalid numeric ticket ID.' });
+    }
+
+    // 1. Fetch ticket first
     const { data: ticket, error: fetchErr } = await supabase
       .from('requests')
       .select('*')
-      .eq('id', numericTicketId)
+      .eq('id', ticketId)
       .single();
 
     if (fetchErr || !ticket) {
-      return res.status(404).json({ error: 'Ticket not found.' });
+      return res.status(404).json({ error: `Ticket #${ticketId} not found.` });
     }
 
-    // 2. Mark ticket as RETURNED
-    const { data: updatedTicket, error: updateErr } = await supabase
+    // 2. Explicitly update status to RETURNED
+    const { data: updatedRows, error: updateErr } = await supabase
       .from('requests')
       .update({
         status: 'RETURNED',
@@ -543,15 +559,18 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
         item_condition: condition,
         admin_remarks: admin_remarks || 'Item returned via Admin Desk'
       })
-      .eq('id', numericTicketId)
-      .select()
-      .single();
+      .eq('id', ticketId)
+      .select();
 
-    if (updateErr) throw updateErr;
+    if (updateErr) {
+      console.error('Supabase update error:', updateErr);
+      throw updateErr;
+    }
 
-    let restoredStock = null;
+    const updatedTicket = updatedRows && updatedRows.length > 0 ? updatedRows[0] : ticket;
 
     // 3. Restore inventory quantity if good condition
+    let restoredStock = null;
     if (condition.toLowerCase().includes('good')) {
       let targetInv = null;
 
@@ -581,7 +600,7 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
       success: true, 
       ticket: updatedTicket, 
       restored_stock: restoredStock,
-      message: `Return recorded successfully.${restoredStock !== null ? ` Catalog stock restored to ${restoredStock}.` : ''}` 
+      message: `Return recorded successfully. Ticket #${ticketId} is now RETURNED.` 
     });
 
   } catch (err) {
