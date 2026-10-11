@@ -409,3 +409,103 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
+const PDFDocument = require('pdfkit');
+
+// ENDPOINT PARA SA DIRECT PDF DOWNLOAD/VIEW PAG-SCAN NG QR CODE
+app.get('/api/admin/records-pdf', async (req, res) => {
+  try {
+    // 1. Kuhanin ang totoong data mula sa iyong database (hal. Supabase / PostgreSQL)
+    // Palitan ito base sa query method mo (hal. const { data: tickets } = await supabase.from('requests').select('*'))
+    const { data: tickets, error } = await supabase
+      .from('requests')
+      .select('*')
+      .order('id', { ascending: false });
+
+    if (error) throw error;
+
+    // 2. I-set ang response headers para mismong PDF file ang mabuksan sa browser
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="SmartTrack_Item_Records.pdf"');
+
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    doc.pipe(res);
+
+    // 3. Header & Pamagat
+    doc.fontSize(18).text('SmartTrack Command Center', { align: 'center' });
+    doc.fontSize(11).fillColor('#64748b').text('Live Inventory & Custodian Item Audit Report', { align: 'center' });
+    doc.moveDown(0.5);
+    doc.fontSize(9).text(`Petsa ng Pagkagawa: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`, { align: 'right' });
+    doc.moveDown();
+
+    // 4. Kalkulahin ang eksaktong bilang mula sa database
+    let totalBorrowed = 0;
+    let totalReturned = 0;
+    let totalPending = 0;
+
+    (tickets || []).forEach(t => {
+      const q = parseInt(t.quantity || 1, 10);
+      if (t.status === 'APPROVED' || t.status === 'RETURNED') totalBorrowed += q;
+      if (t.status === 'RETURNED') totalReturned += q;
+      if (t.status === 'PENDING') totalPending += q;
+    });
+
+    // Summary Box
+    doc.fillColor('#000').fontSize(11).text('BUOD NG MGA KAGAMITAN:', { underline: true });
+    doc.fontSize(10)
+       .text(`• Kabuuang Nahiram (Approved/Returned): ${totalBorrowed}`)
+       .text(`• Kabuuang Nabalik (Good/Audited): ${totalReturned}`)
+       .text(`• Kasalukuyang Hawak Pa ng Humiram: ${totalBorrowed - totalReturned}`)
+       .text(`• Nakabinbing Kahilingan (Pending): ${totalPending}`);
+    doc.moveDown();
+
+    // 5. Talaan ng mga Transaksyon (Table Header)
+    doc.fontSize(10).fillColor('#000').text('MGA DETALYE NG TRANSACTION:', { underline: true });
+    doc.moveDown(0.5);
+
+    const startX = 40;
+    let currentY = doc.y;
+
+    doc.fontSize(8).fillColor('#334155');
+    doc.text('TICKET', startX, currentY);
+    doc.text('HUMIRAM', startX + 50, currentY);
+    doc.text('ITEM', startX + 150, currentY);
+    doc.text('QTY', startX + 270, currentY);
+    doc.text('PETSA NAHIRAM', startX + 300, currentY);
+    doc.text('PETSA NABALIK', startX + 410, currentY);
+    doc.text('STATUS', startX + 490, currentY);
+
+    doc.moveTo(startX, currentY + 12).lineTo(560, currentY + 12).stroke('#cbd5e1');
+    currentY += 18;
+
+    // Helper formatter para sa tumpak na petsa
+    const formatLiveDate = (d) => {
+      if (!d) return '—';
+      const dt = new Date(d);
+      return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-PH', { month: 'numeric', day: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    };
+
+    // 6. Paglagay ng bawat row galing sa database
+    (tickets || []).forEach(t => {
+      if (currentY > 750) { // Page break kung mahaba ang listahan
+        doc.addPage();
+        currentY = 40;
+      }
+
+      doc.fillColor('#0f172a').fontSize(8);
+      doc.text(`#${t.id}`, startX, currentY);
+      doc.text(String(t.requester_name || 'N/A').slice(0, 18), startX + 50, currentY);
+      doc.text(String(t.item_name || 'Item').slice(0, 22), startX + 150, currentY);
+      doc.text(String(t.quantity || 1), startX + 270, currentY);
+      doc.text(formatLiveDate(t.borrowed_at), startX + 300, currentY);
+      doc.text(formatLiveDate(t.returned_at), startX + 410, currentY);
+      doc.text(String(t.status || ''), startX + 490, currentY);
+
+      currentY += 16;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error sa pag-generate ng live database PDF report: ' + err.message);
+  }
+});
