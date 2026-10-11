@@ -265,7 +265,6 @@ app.get('/api/public/inventory', async (req, res) => {
   res.json(data || []);
 });
 
-// Single Equipment Item Query
 app.get('/api/inventory/item', async (req, res) => {
   try {
     const { tag, name } = req.query;
@@ -292,7 +291,6 @@ app.get('/api/inventory/item', async (req, res) => {
   }
 });
 
-// Admin Add or Restock Equipment
 app.post('/api/admin/inventory/add', async (req, res) => {
   try {
     const { asset_tag, name, category, quantity } = req.body;
@@ -429,7 +427,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
 
   } catch (err) {
     console.error('Deduction error:', err);
-    return res.status(500).json({ error: err.message || 'Error updating inventory' });
+    return res.status(500).json({ error: 'Error updating inventory' });
   }
 });
 
@@ -506,48 +504,78 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
   }
 });
 
+// PROCESS RETURN & RESTORE CATALOG INVENTORY
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const { id } = req.params;
     const { item_condition, admin_remarks } = req.body;
 
-    if (!item_condition) {
-      return res.status(400).json({ error: 'Please specify if the item is in good or bad condition.' });
+    const condition = item_condition || 'Good Condition';
+    const numericTicketId = parseInt(id, 10);
+
+    const { data: ticket, error: fetchErr } = await supabase
+      .from('requests')
+      .select('*')
+      .eq('id', numericTicketId)
+      .single();
+
+    if (fetchErr || !ticket) {
+      return res.status(404).json({ error: 'Ticket not found.' });
     }
 
-    const { data: ticket, error: fetchErr } = await supabase.from('requests').select('*').eq('id', parseInt(id, 10)).single();
-    if (fetchErr || !ticket) return res.status(404).json({ error: 'Ticket not found.' });
-
+    // 1. Mark ticket as RETURNED
     const { data: updatedTicket, error: updateErr } = await supabase
       .from('requests')
       .update({
         status: 'RETURNED',
         returned_at: new Date().toISOString(),
-        item_condition,
-        admin_remarks: admin_remarks || ''
+        item_condition: condition,
+        admin_remarks: admin_remarks || 'Returned via Custodian Terminal'
       })
-      .eq('id', parseInt(id, 10))
+      .eq('id', numericTicketId)
       .select()
       .single();
 
     if (updateErr) throw updateErr;
 
-    if (ticket.item_id && item_condition.includes('Good')) {
-      const { data: inv } = await supabase.from('inventory').select('*').eq('id', ticket.item_id).maybeSingle();
-      if (inv) {
-        const restored = (parseInt(inv.quantity, 10) || 0) + parseInt(ticket.quantity || 1, 10);
+    let restoredStock = null;
+
+    // 2. If condition is good, increment catalog stock back
+    if (condition.toLowerCase().includes('good')) {
+      let targetInv = null;
+
+      if (ticket.item_id) {
+        const { data: invById } = await supabase.from('inventory').select('*').eq('id', ticket.item_id).maybeSingle();
+        targetInv = invById;
+      }
+      if (!targetInv && ticket.item_name) {
+        const { data: invByName } = await supabase.from('inventory').select('*').ilike('name', `%${ticket.item_name.trim()}%`).limit(1);
+        if (invByName && invByName.length > 0) targetInv = invByName[0];
+      }
+
+      if (targetInv) {
+        const returnQty = parseInt(ticket.quantity || 1, 10);
+        restoredStock = (parseInt(targetInv.quantity, 10) || 0) + returnQty;
+
         await supabase.from('inventory')
           .update({ 
-            quantity: restored, 
-            available_quantity: restored 
+            quantity: restoredStock, 
+            available_quantity: restoredStock 
           })
-          .eq('id', inv.id);
+          .eq('id', targetInv.id);
       }
     }
 
-    res.json({ success: true, ticket: updatedTicket, message: 'Item returned and stock updated.' });
+    return res.json({ 
+      success: true, 
+      ticket: updatedTicket, 
+      restored_stock: restoredStock,
+      message: `Return recorded successfully.${restoredStock !== null ? ` Stock restored to ${restoredStock}.` : ''}` 
+    });
+
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Failed to complete return audit.' });
+    console.error('Process return error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to complete return audit.' });
   }
 });
 
