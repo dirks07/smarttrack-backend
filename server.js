@@ -524,7 +524,7 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
   }
 });
 
-// PROCESS RETURN & RESTORE INVENTORY
+// PROCESS RETURN & RESTORE INVENTORY (EXPLICIT INTEGER CAST & STATUS UPDATE)
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -601,6 +601,192 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
   } catch (err) {
     console.error('Process return error:', err);
     return res.status(500).json({ error: err.message || 'Failed to complete return audit.' });
+  }
+});
+
+// -----------------------------------------------------------------
+// 7. PUBLIC AUDIT & RECORDS VIEW (INVENTORY LIST, TOTALS & GMAIL)
+// -----------------------------------------------------------------
+app.get('/records', async (req, res) => {
+  try {
+    // 1. Fetch live inventory
+    const { data: inventory, error: invErr } = await supabase
+      .from('inventory')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (invErr) throw invErr;
+
+    // 2. Fetch all request history
+    const { data: requests, error: reqErr } = await supabase
+      .from('requests')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (reqErr) throw reqErr;
+
+    // 3. Fetch borrowers to match official Gmail addresses
+    const { data: borrowers } = await supabase
+      .from('borrowers')
+      .select('identifier, email');
+
+    const emailMap = new Map();
+    if (borrowers) {
+      borrowers.forEach(b => {
+        if (b.identifier) {
+          emailMap.set(b.identifier.trim(), b.email || 'N/A');
+        }
+      });
+    }
+
+    // Calculations
+    const totalItemsCount = (inventory || []).reduce((acc, cur) => acc + (parseInt(cur.quantity, 10) || 0), 0);
+    const totalBorrowedCount = (requests || []).filter(r => r.status === 'CLAIMED' || r.status === 'APPROVED').length;
+    const totalReturnedCount = (requests || []).filter(r => r.status === 'RETURNED').length;
+
+    // Inventory Table Rows
+    const inventoryRows = (inventory || []).map((item, idx) => `
+      <tr>
+        <td style="padding:10px 14px; border-bottom:1px solid #1e293b;">${idx + 1}</td>
+        <td style="padding:10px 14px; border-bottom:1px solid #1e293b; font-family:monospace; color:#38bdf8;">${item.asset_code || item.asset_tag || 'N/A'}</td>
+        <td style="padding:10px 14px; border-bottom:1px solid #1e293b; font-weight:700; color:#fff;">${item.name}</td>
+        <td style="padding:10px 14px; border-bottom:1px solid #1e293b; color:#94a3b8;">${item.category || 'General'}</td>
+        <td style="padding:10px 14px; border-bottom:1px solid #1e293b; text-align:right; font-weight:800; color:#34d399;">${item.quantity || 0}</td>
+      </tr>
+    `).join('');
+
+    // Requisition Table Rows with Borrower Gmail
+    const requestRows = (requests || []).map(r => {
+      const borrowerEmail = (r.identifier && emailMap.get(r.identifier.trim())) || r.email || 'N/A';
+      const conditionColor = (r.item_condition || '').includes('Good') ? '#34d399' : (r.item_condition ? '#f87171' : '#64748b');
+
+      return `
+        <tr>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b;">#${r.id}</td>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b;">
+            <div style="color:#fff; font-weight:600;">${r.requester_name}</div>
+            <div style="font-size:11px; color:#64748b;">ID: ${r.identifier} • ${r.role || 'Student'}</div>
+          </td>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b;">
+            <a href="mailto:${borrowerEmail}" style="color:#38bdf8; text-decoration:none; font-size:12px; font-weight:500;">
+              ${borrowerEmail}
+            </a>
+          </td>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b; font-weight:600; color:#e2e8f0;">
+            ${r.item_name} <span style="color:#34d399; font-weight:700;">(x${r.quantity})</span>
+          </td>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b; font-size:12px; color:#94a3b8;">
+            ${r.borrowed_at ? new Date(r.borrowed_at).toLocaleDateString() : '—'}
+          </td>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b; font-size:12px; color:#94a3b8;">
+            ${r.returned_at ? new Date(r.returned_at).toLocaleDateString() : '—'}
+          </td>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b; font-size:12px; font-weight:600; color:${conditionColor};">
+            ${r.item_condition || 'Pending'}
+          </td>
+          <td style="padding:10px 14px; border-bottom:1px solid #1e293b;">
+            <span style="display:inline-block; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:800; background:#1e293b; color:#cbd5e1;">
+              ${r.status}
+            </span>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <title>Live Equipment & Inventory Audit Records</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+          body { background: #070d1e; color: #f1f5f9; padding: 24px; }
+          .container { max-width: 1100px; margin: 0 auto; }
+          .header-box { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #1e293b; }
+          .stat-deck { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+          .stat-card { background: #0b1329; border: 1px solid #1e293b; border-radius: 14px; padding: 18px; text-align: center; }
+          .stat-num { font-size: 28px; font-weight: 900; color: #38bdf8; }
+          .section-title { font-size: 15px; font-weight: 800; color: #fff; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+          table { width: 100%; border-collapse: collapse; background: #0b1329; border: 1px solid #1e293b; border-radius: 14px; overflow: hidden; margin-bottom: 28px; }
+          th { background: #0f1a38; padding: 12px 14px; text-align: left; font-size: 11px; text-transform: uppercase; color: #94a3b8; border-bottom: 1px solid #1e293b; }
+          .btn-print { background: #10b981; color: #022c22; font-weight: 700; padding: 10px 18px; border-radius: 8px; border: none; cursor: pointer; transition: background 0.15s; }
+          .btn-print:hover { background: #34d399; }
+          @media print { .btn-print { display: none; } }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header-box">
+            <div>
+              <h1 style="font-size: 20px; font-weight: 800; color: #10b981;">CDM SMARTTRACK AUDIT REPORT</h1>
+              <p style="font-size: 12px; color: #94a3b8;">Generated on ${new Date().toLocaleString()}</p>
+            </div>
+            <button class="btn-print" onclick="window.print()">Print / Save PDF</button>
+          </div>
+
+          <div class="stat-deck">
+            <div class="stat-card">
+              <div style="font-size: 12px; color: #94a3b8;">TOTAL CATALOG UNITS</div>
+              <div class="stat-num" style="color: #34d399;">${totalItemsCount}</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 12px; color: #94a3b8;">ACTIVE BORROWED</div>
+              <div class="stat-num" style="color: #38bdf8;">${totalBorrowedCount}</div>
+            </div>
+            <div class="stat-card">
+              <div style="font-size: 12px; color: #94a3b8;">TOTAL RETURNED</div>
+              <div class="stat-num" style="color: #818cf8;">${totalReturnedCount}</div>
+            </div>
+          </div>
+
+          <div class="section-title">📦 Equipment Inventory & Total Quantities</div>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Asset Code</th>
+                <th>Item Name</th>
+                <th>Category</th>
+                <th style="text-align: right;">Total In Stock</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${inventoryRows || '<tr><td colspan="5" style="text-align:center; padding:16px;">No items found in catalog.</td></tr>'}
+            </tbody>
+            <tfoot>
+              <tr style="background:#0f1a38; font-weight:800;">
+                <td colspan="4" style="padding:12px 14px; text-align:right; color:#fff;">GRAND TOTAL UNITS:</td>
+                <td style="padding:12px 14px; text-align:right; color:#34d399; font-size:16px;">${totalItemsCount}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="section-title">📋 Requisition & Return Audit Logs (With Borrower Contact)</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Requester</th>
+                <th>Borrower Gmail</th>
+                <th>Item</th>
+                <th>Borrowed</th>
+                <th>Returned</th>
+                <th>Condition</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${requestRows || '<tr><td colspan="8" style="text-align:center; padding:16px;">No requisition records found.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('Records page error:', err);
+    res.status(500).send(`Error generating records: ${err.message}`);
   }
 });
 
