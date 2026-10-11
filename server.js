@@ -111,7 +111,66 @@ app.post('/api/public/register', async (req, res) => {
     res.status(500).json({ error: error.message || 'Registration failed.' });
   }
 });
+// POST /api/admin/inventory/deduct
+app.post('/api/admin/inventory/deduct', async (req, res) => {
+  try {
+    const { asset_tag, item_name, quantity, ticket_id } = req.body;
+    const qtyToDeduct = parseInt(quantity, 10) || 1;
 
+    // 1. Fetch current equipment from database by asset_tag or name
+    let query = supabase.from('inventory').select('*');
+    if (asset_tag) {
+      query = query.eq('asset_tag', asset_tag);
+    } else {
+      query = query.ilike('name', `%${item_name}%`);
+    }
+
+    const { data: items, error: fetchErr } = await query;
+    if (fetchErr || !items || items.length === 0) {
+      return res.status(404).json({ error: 'Item not found in catalog.' });
+    }
+
+    const currentItem = items[0];
+    const currentStock = parseInt(currentItem.quantity, 10) || 0;
+
+    if (currentStock < qtyToDeduct) {
+      return res.status(400).json({ 
+        error: `Insufficient stock! Catalog only has ${currentStock} available.` 
+      });
+    }
+
+    const newStock = currentStock - qtyToDeduct;
+
+    // 2. Deduct quantity in inventory catalog
+    const { error: updateErr } = await supabase
+      .from('inventory')
+      .update({ quantity: newStock })
+      .eq('id', currentItem.id);
+
+    if (updateErr) throw updateErr;
+
+    // 3. (Optional) Record the borrowed_at timestamp on the ticket
+    if (ticket_id) {
+      await supabase
+        .from('requests')
+        .update({ 
+          borrowed_at: new Date().toISOString(),
+          status: 'APPROVED' // or 'DISPATCHED'
+        })
+        .eq('id', ticket_id);
+    }
+
+    return res.json({ 
+      success: true, 
+      message: `Successfully dispatched. Catalog updated: ${currentItem.name} stock reduced from ${currentStock} to ${newStock}.`,
+      remaining_stock: newStock 
+    });
+
+  } catch (err) {
+    console.error('Deduction error:', err);
+    return res.status(500).json({ error: 'Server error deducting catalog quantity.' });
+  }
+});
 app.get('/api/public/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
