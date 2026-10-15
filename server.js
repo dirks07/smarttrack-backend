@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');           // replaces nodemailer
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -34,16 +34,59 @@ const supabase = createClient(rawUrl, rawKey);
 const pendingBorrowerTokens = new Map();
 const pendingAdminTokens = new Map();
 
-// Configure Nodemailer Transporter (for Password Recovery)
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER || 'cdmsmarttrack@gmail.com',
-    pass: process.env.EMAIL_PASS
-  }
-});
+// Resend client (HTTP-based, no SMTP — works on Render free tier)
+// Add RESEND_API_KEY in Render -> Environment Variables
+// Free tier: 100 emails/day | Sign up at https://resend.com
+const resend = new Resend(process.env.RESEND_API_KEY || '');
 
-// Helper: EmailJS HTTPS Dispatcher (for Registration Activation Links)
+// Shared helper: send a password-recovery email via Resend
+async function sendRecoveryEmail({ toEmail, fullName, identifier, tempPassword, portalLabel }) {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY is not set in environment variables.');
+  }
+
+  const { error } = await resend.emails.send({
+    // Use Resend shared domain while testing.
+    // Once your domain is verified on resend.com, change to your own sender address.
+    from: 'CDM SmartTrack <onboarding@resend.dev>',
+    to: [toEmail],
+    subject: 'CDM SmartTrack — Account Password Recovery',
+    html: `
+      <div style="font-family: Arial, sans-serif; background-color: #0b111e; color: #f8fafc;
+                  padding: 32px; border-radius: 12px; max-width: 520px; margin: auto;">
+        <h2 style="color: #10b981; margin-bottom: 8px;">CDM SmartTrack Password Reset</h2>
+        <p>Hello <strong>${fullName}</strong>,</p>
+        <p>We received a request to recover your <strong>${portalLabel}</strong> account credentials.</p>
+
+        <div style="background-color: #1e293b; border-left: 4px solid #10b981;
+                    padding: 16px; border-radius: 8px; margin: 20px 0;">
+          <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">
+            Your ${portalLabel === 'Admin Portal' ? 'Staff' : 'Student / Employee'} ID:
+          </div>
+          <div style="font-size: 16px; font-weight: bold; color: #ffffff; margin-bottom: 14px;">
+            ${identifier}
+          </div>
+          <div style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">Temporary Login Password:</div>
+          <div style="font-size: 22px; font-weight: bold; color: #38bdf8; letter-spacing: 3px;">
+            ${tempPassword}
+          </div>
+        </div>
+
+        <p style="color: #94a3b8; font-size: 13px; line-height: 1.6;">
+          Please log in with this temporary password and change it as soon as possible.<br>
+          If you did not request this, you can safely ignore this email.
+        </p>
+        <p style="color: #64748b; font-size: 11px; margin-top: 24px;">
+          — CDM SmartTrack System | Colegio de Montalban
+        </p>
+      </div>
+    `
+  });
+
+  if (error) throw new Error(error.message || 'Resend failed to send the email.');
+}
+
+// Helper: EmailJS HTTPS Dispatcher (for Registration Activation Links — unchanged)
 async function sendVerificationEmail({ toEmail, fullName, verificationUrl, portalType }) {
   const serviceId = (process.env.EMAILJS_SERVICE_ID || '').replace(/^["']|["']$/g, '').trim();
   const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').replace(/^["']|["']$/g, '').trim();
@@ -218,7 +261,7 @@ app.post('/api/borrower/login', async (req, res) => {
   }
 });
 
-// Borrower Forgot Password
+// Borrower Forgot Password — uses Resend (HTTP) instead of nodemailer (SMTP)
 app.post('/api/borrower/forgot-password', async (req, res) => {
   const { email } = req.body;
 
@@ -229,7 +272,6 @@ app.post('/api/borrower/forgot-password', async (req, res) => {
   try {
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Look up borrower in 'borrowers' table
     const { data: borrower, error: findError } = await supabase
       .from('borrowers')
       .select('id, full_name, email, identifier')
@@ -240,10 +282,8 @@ app.post('/api/borrower/forgot-password', async (req, res) => {
       return res.status(404).json({ error: 'No borrower account found with that email address.' });
     }
 
-    // 2. Generate a 6-digit temporary password
     const tempPassword = 'CDM-' + Math.floor(100000 + Math.random() * 900000);
 
-    // 3. Update the password in 'borrowers' table
     const { error: updateError } = await supabase
       .from('borrowers')
       .update({ password: tempPassword })
@@ -251,38 +291,63 @@ app.post('/api/borrower/forgot-password', async (req, res) => {
 
     if (updateError) throw updateError;
 
-    // 4. Send email with ID and temporary password
-    const mailOptions = {
-      from: `"CDM SmartTrack" <${process.env.EMAIL_USER || 'cdmsmarttrack@gmail.com'}>`,
-      to: borrower.email,
-      subject: 'CDM SmartTrack — Account Password Recovery',
-      html: `
-        <div style="font-family: Arial, sans-serif; background-color: #0b111e; color: #f8fafc; padding: 24px; border-radius: 12px; max-width: 500px;">
-          <h2 style="color: #10b981; margin-bottom: 8px;">CDM SmartTrack Password Reset</h2>
-          <p>Hello <strong>${borrower.full_name}</strong>,</p>
-          <p>We received a request to recover your mobile borrower account credentials.</p>
-          
-          <div style="background-color: #1e293b; border-left: 4px solid #10b981; padding: 14px; border-radius: 6px; margin: 18px 0;">
-            <div style="font-size: 13px; color: #94a3b8;">Your Student / Employee ID:</div>
-            <div style="font-size: 16px; font-weight: bold; color: #ffffff; margin-bottom: 10px;">${borrower.identifier}</div>
-            
-            <div style="font-size: 13px; color: #94a3b8;">Temporary Login Password:</div>
-            <div style="font-size: 20px; font-weight: bold; color: #38bdf8; letter-spacing: 2px;">${tempPassword}</div>
-          </div>
-          
-          <p style="color: #94a3b8; font-size: 13px; line-height: 1.5;">
-            Please log in using this temporary password on the CDM SmartTrack mobile app.
-          </p>
-        </div>
-      `
-    };
-
-    await transporter.sendMail(mailOptions);
+    await sendRecoveryEmail({
+      toEmail: borrower.email,
+      fullName: borrower.full_name,
+      identifier: borrower.identifier,
+      tempPassword,
+      portalLabel: 'Borrower Portal'
+    });
 
     return res.json({ message: `Credentials and temporary password sent to ${borrower.email}.` });
   } catch (err) {
     console.error('Forgot password error:', err);
-    return res.status(500).json({ error: 'Failed to send recovery email. Please check server email credentials.' });
+    return res.status(500).json({ error: err.message || 'Failed to send recovery email.' });
+  }
+});
+
+// Admin Forgot Password — uses Resend (HTTP) instead of nodemailer (SMTP)
+app.post('/api/admin/forgot-password', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || !email.trim()) {
+    return res.status(400).json({ error: 'Please enter your registered Gmail address.' });
+  }
+
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+
+    const { data: admin, error: findError } = await supabase
+      .from('admins')
+      .select('id, full_name, email, identifier')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (findError || !admin) {
+      return res.status(404).json({ error: 'No admin account found with that email address.' });
+    }
+
+    const tempPassword = 'ADM-' + Math.floor(100000 + Math.random() * 900000);
+
+    const { error: updateError } = await supabase
+      .from('admins')
+      .update({ password: tempPassword })
+      .eq('id', admin.id);
+
+    if (updateError) throw updateError;
+
+    await sendRecoveryEmail({
+      toEmail: admin.email,
+      fullName: admin.full_name,
+      identifier: admin.identifier,
+      tempPassword,
+      portalLabel: 'Admin Portal'
+    });
+
+    return res.json({ message: `Credentials and temporary password sent to ${admin.email}.` });
+  } catch (err) {
+    console.error('Admin forgot password error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to send recovery email.' });
   }
 });
 
@@ -454,8 +519,8 @@ app.post('/api/admin/inventory/add', async (req, res) => {
 
       const { data: updated, error: updateErr } = await supabase
         .from('inventory')
-        .update({ 
-          quantity: updatedQty, 
+        .update({
+          quantity: updatedQty,
           available_quantity: updatedAvail,
           asset_code: existing.asset_code || resolvedCode
         })
@@ -547,9 +612,9 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
 
     const { error: updateErr } = await supabase
       .from('inventory')
-      .update({ 
-        quantity: newStock, 
-        available_quantity: newStock 
+      .update({
+        quantity: newStock,
+        available_quantity: newStock
       })
       .eq('id', targetItem.id);
 
@@ -558,17 +623,17 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
     if (ticket_id) {
       await supabase
         .from('requests')
-        .update({ 
-          borrowed_at: new Date().toISOString(), 
-          status: 'CLAIMED' 
+        .update({
+          borrowed_at: new Date().toISOString(),
+          status: 'CLAIMED'
         })
         .eq('id', parseInt(ticket_id, 10));
     }
 
-    return res.json({ 
-      success: true, 
-      message: `Dispatched ${qtyToDeduct} unit(s).`, 
-      remaining_stock: newStock 
+    return res.json({
+      success: true,
+      message: `Dispatched ${qtyToDeduct} unit(s).`,
+      remaining_stock: newStock
     });
 
   } catch (err) {
@@ -583,7 +648,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
 app.post('/api/public/requests', async (req, res) => {
   try {
     const { item_id, item_name, quantity, purpose, requester_name, identifier, role, department } = req.body;
-    
+
     const { data, error } = await supabase.from('requests').insert([{
       item_id: item_id ? parseInt(item_id, 10) : null,
       item_name,
@@ -682,10 +747,10 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
       throw error;
     }
 
-    return res.json({ 
-      success: true, 
-      message: `Ticket #${ticketId} permanently removed.`, 
-      deleted: data 
+    return res.json({
+      success: true,
+      message: `Ticket #${ticketId} permanently removed.`,
+      deleted: data
     });
   } catch (err) {
     console.error('Delete request error:', err);
@@ -752,19 +817,19 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
         restoredStock = (parseInt(targetInv.quantity, 10) || 0) + returnQty;
 
         await supabase.from('inventory')
-          .update({ 
-            quantity: restoredStock, 
-            available_quantity: restoredStock 
+          .update({
+            quantity: restoredStock,
+            available_quantity: restoredStock
           })
           .eq('id', targetInv.id);
       }
     }
 
-    return res.json({ 
-      success: true, 
-      ticket: updatedTicket, 
+    return res.json({
+      success: true,
+      ticket: updatedTicket,
       restored_stock: restoredStock,
-      message: `Return recorded successfully. Ticket #${ticketId} is now RETURNED.` 
+      message: `Return recorded successfully. Ticket #${ticketId} is now RETURNED.`
     });
 
   } catch (err) {
