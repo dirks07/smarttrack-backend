@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -10,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 // -----------------------------------------------------------------
-// 1. SUPABASE INITIALIZATION
+// 1. SUPABASE & EMAIL INITIALIZATION
 // -----------------------------------------------------------------
 let rawUrl = (process.env.SUPABASE_URL || 'https://imjdhuczyqaxhifyucbo.supabase.co').trim().replace(/^["']|["']$/g, '');
 try {
@@ -29,10 +30,20 @@ const rawKey = (
 
 const supabase = createClient(rawUrl, rawKey);
 
+// In-memory token storage for registration email activations
 const pendingBorrowerTokens = new Map();
 const pendingAdminTokens = new Map();
 
-// Helper: EmailJS HTTPS Dispatcher
+// Configure Nodemailer Transporter (for Password Recovery)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER || 'cdmsmarttrack@gmail.com',
+    pass: process.env.EMAIL_PASS
+  }
+});
+
+// Helper: EmailJS HTTPS Dispatcher (for Registration Activation Links)
 async function sendVerificationEmail({ toEmail, fullName, verificationUrl, portalType }) {
   const serviceId = (process.env.EMAILJS_SERVICE_ID || '').replace(/^["']|["']$/g, '').trim();
   const templateId = (process.env.EMAILJS_TEMPLATE_ID || '').replace(/^["']|["']$/g, '').trim();
@@ -78,8 +89,10 @@ app.get('/health', (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 3. BORROWER AUTHENTICATION (Mobile)
+// 3. BORROWER AUTHENTICATION & RECOVERY (Mobile App)
 // -----------------------------------------------------------------
+
+// Borrower Registration
 app.post('/api/public/register', async (req, res) => {
   try {
     const { full_name, identifier, email, role, department, password } = req.body;
@@ -87,10 +100,13 @@ app.post('/api/public/register', async (req, res) => {
       return res.status(400).json({ error: 'All fields including email are required.' });
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanId = identifier.trim().toUpperCase();
+
     const { data: existingUser } = await supabase
       .from('borrowers')
       .select('id')
-      .or(`identifier.eq.${identifier},email.eq.${email}`)
+      .or(`identifier.eq.${cleanId},email.eq.${cleanEmail}`)
       .maybeSingle();
 
     if (existingUser) {
@@ -99,19 +115,30 @@ app.post('/api/public/register', async (req, res) => {
 
     const token = 'b_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     pendingBorrowerTokens.set(token, {
-      full_name, identifier, email, role: role || 'Student', department: department || 'BSIT', password,
+      full_name,
+      identifier: cleanId,
+      email: cleanEmail,
+      role: role || 'Student',
+      department: department || 'BSIT',
+      password,
       expiresAt: Date.now() + 15 * 60 * 1000
     });
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/public/verify-email?token=${token}`;
-    await sendVerificationEmail({ toEmail: email, fullName: full_name, verificationUrl, portalType: 'Student Borrower' });
+    await sendVerificationEmail({ toEmail: cleanEmail, fullName: full_name, verificationUrl, portalType: 'Student Borrower' });
 
-    res.json({ success: true, message: `Verification email sent to ${email}.` });
+    res.json({ success: true, message: `Verification email sent to ${cleanEmail}.` });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Registration failed.' });
   }
 });
 
+// Alias for registration endpoint
+app.post('/api/borrower/register', async (req, res) => {
+  return app._router.handle({ ...req, url: '/api/public/register' }, res);
+});
+
+// Borrower Email Verification Link Click
 app.get('/api/public/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
@@ -138,24 +165,29 @@ app.get('/api/public/verify-email', async (req, res) => {
     if (insertError) throw insertError;
     pendingBorrowerTokens.delete(token);
 
-    res.send(`<body style="font-family:sans-serif;background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
-      <div style="background:#131b2e;padding:36px;border-radius:16px;text-align:center;">
-        <h2 style="color:#10b981;">Account Activated!</h2>
-        <p>You can now sign in on the mobile app.</p>
-      </div>
-    </body>`);
+    res.send(`
+      <body style="font-family:sans-serif;background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
+        <div style="background:#131b2e;padding:36px;border-radius:16px;text-align:center;">
+          <h2 style="color:#10b981;">Account Activated!</h2>
+          <p>You can now sign in on the mobile app.</p>
+        </div>
+      </body>
+    `);
   } catch (error) {
     res.status(500).send(`Activation failed: ${error.message}`);
   }
 });
 
+// Borrower Login
 app.post('/api/public/login', async (req, res) => {
   try {
     const { identifier, password } = req.body;
+    const cleanId = (identifier || '').trim().toUpperCase();
+
     const { data: user, error } = await supabase
       .from('borrowers')
       .select('*')
-      .eq('identifier', identifier)
+      .eq('identifier', cleanId)
       .eq('password', password)
       .maybeSingle();
 
@@ -166,7 +198,95 @@ app.post('/api/public/login', async (req, res) => {
   }
 });
 
-// Borrower Directory for Email Matching
+// Login alias for the mobile client
+app.post('/api/borrower/login', async (req, res) => {
+  try {
+    const { identifier, password } = req.body;
+    const cleanId = (identifier || '').trim().toUpperCase();
+
+    const { data: user, error } = await supabase
+      .from('borrowers')
+      .select('*')
+      .eq('identifier', cleanId)
+      .eq('password', password)
+      .maybeSingle();
+
+    if (error || !user) return res.status(401).json({ error: 'Invalid ID Number or Password.' });
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Borrower Forgot Password
+app.post('/api/borrower/forgot-password', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || !email.trim()) {
+    return res.status(400).json({ error: 'Please enter your registered Gmail address.' });
+  }
+
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Look up borrower in 'borrowers' table
+    const { data: borrower, error: findError } = await supabase
+      .from('borrowers')
+      .select('id, full_name, email, identifier')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (findError || !borrower) {
+      return res.status(404).json({ error: 'No borrower account found with that email address.' });
+    }
+
+    // 2. Generate a 6-digit temporary password
+    const tempPassword = 'CDM-' + Math.floor(100000 + Math.random() * 900000);
+
+    // 3. Update the password in 'borrowers' table
+    const { error: updateError } = await supabase
+      .from('borrowers')
+      .update({ password: tempPassword })
+      .eq('id', borrower.id);
+
+    if (updateError) throw updateError;
+
+    // 4. Send email with ID and temporary password
+    const mailOptions = {
+      from: `"CDM SmartTrack" <${process.env.EMAIL_USER || 'cdmsmarttrack@gmail.com'}>`,
+      to: borrower.email,
+      subject: 'CDM SmartTrack — Account Password Recovery',
+      html: `
+        <div style="font-family: Arial, sans-serif; background-color: #0b111e; color: #f8fafc; padding: 24px; border-radius: 12px; max-width: 500px;">
+          <h2 style="color: #10b981; margin-bottom: 8px;">CDM SmartTrack Password Reset</h2>
+          <p>Hello <strong>${borrower.full_name}</strong>,</p>
+          <p>We received a request to recover your mobile borrower account credentials.</p>
+          
+          <div style="background-color: #1e293b; border-left: 4px solid #10b981; padding: 14px; border-radius: 6px; margin: 18px 0;">
+            <div style="font-size: 13px; color: #94a3b8;">Your Student / Employee ID:</div>
+            <div style="font-size: 16px; font-weight: bold; color: #ffffff; margin-bottom: 10px;">${borrower.identifier}</div>
+            
+            <div style="font-size: 13px; color: #94a3b8;">Temporary Login Password:</div>
+            <div style="font-size: 20px; font-weight: bold; color: #38bdf8; letter-spacing: 2px;">${tempPassword}</div>
+          </div>
+          
+          <p style="color: #94a3b8; font-size: 13px; line-height: 1.5;">
+            Please log in using this temporary password on the CDM SmartTrack mobile app.
+          </p>
+        </div>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.json({ message: `Credentials and temporary password sent to ${borrower.email}.` });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    return res.status(500).json({ error: 'Failed to send recovery email. Please check server email credentials.' });
+  }
+});
+
+// Borrower Directory for Admin Reports
 app.get('/api/admin/borrowers', async (req, res) => {
   const { data, error } = await supabase.from('borrowers').select('identifier, full_name, email');
   if (error) return res.status(500).json({ error: error.message });
@@ -174,7 +294,7 @@ app.get('/api/admin/borrowers', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 4. ADMIN AUTHENTICATION (Desktop)
+// 4. ADMIN AUTHENTICATION (Desktop Portal)
 // -----------------------------------------------------------------
 app.post('/api/admin/register', async (req, res) => {
   try {
@@ -183,10 +303,13 @@ app.post('/api/admin/register', async (req, res) => {
       return res.status(400).json({ error: 'All fields including email are required.' });
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanId = identifier.trim().toUpperCase();
+
     const { data: existingAdmin } = await supabase
       .from('admins')
       .select('id')
-      .or(`identifier.eq.${identifier},email.eq.${email}`)
+      .or(`identifier.eq.${cleanId},email.eq.${cleanEmail}`)
       .maybeSingle();
 
     if (existingAdmin) {
@@ -195,14 +318,19 @@ app.post('/api/admin/register', async (req, res) => {
 
     const token = 'a_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     pendingAdminTokens.set(token, {
-      full_name, identifier, email, role: role || 'Admin', department: department || 'Custodian', password,
+      full_name,
+      identifier: cleanId,
+      email: cleanEmail,
+      role: role || 'Admin',
+      department: department || 'Custodian',
+      password,
       expiresAt: Date.now() + 15 * 60 * 1000
     });
 
     const verificationUrl = `https://smarttrack-backend-v6l4.onrender.com/api/admin/verify-email?token=${token}`;
-    await sendVerificationEmail({ toEmail: email, fullName: full_name, verificationUrl, portalType: 'Administrator' });
+    await sendVerificationEmail({ toEmail: cleanEmail, fullName: full_name, verificationUrl, portalType: 'Administrator' });
 
-    res.json({ success: true, message: `Admin activation link sent to ${email}.` });
+    res.json({ success: true, message: `Admin activation link sent to ${cleanEmail}.` });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Admin registration failed.' });
   }
@@ -235,12 +363,14 @@ app.get('/api/admin/verify-email', async (req, res) => {
     if (insertError) throw insertError;
     pendingAdminTokens.delete(token);
 
-    res.send(`<body style="font-family:sans-serif;background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
-      <div style="background:#131b2e;padding:36px;border-radius:16px;text-align:center;">
-        <h2 style="color:#38bdf8;">Administrator Activated!</h2>
-        <p>You can now sign in to the Desktop Command Center.</p>
-      </div>
-    </body>`);
+    res.send(`
+      <body style="font-family:sans-serif;background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
+        <div style="background:#131b2e;padding:36px;border-radius:16px;text-align:center;">
+          <h2 style="color:#38bdf8;">Administrator Activated!</h2>
+          <p>You can now sign in to the Desktop Command Center.</p>
+        </div>
+      </body>
+    `);
   } catch (error) {
     res.status(500).send(`Admin activation failed: ${error.message}`);
   }
@@ -249,10 +379,12 @@ app.get('/api/admin/verify-email', async (req, res) => {
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { identifier, password } = req.body;
+    const cleanId = (identifier || '').trim().toUpperCase();
+
     const { data: admin, error } = await supabase
       .from('admins')
       .select('*')
-      .or(`identifier.eq.${identifier},username.eq.${identifier}`)
+      .or(`identifier.eq.${cleanId},username.eq.${cleanId}`)
       .eq('password', password)
       .maybeSingle();
 
@@ -357,7 +489,7 @@ app.post('/api/admin/inventory/add', async (req, res) => {
   }
 });
 
-// Deduct From Inventory Upon Dispatch
+// Deduct From Inventory Upon Barcode Dispatch
 app.post('/api/admin/inventory/deduct', async (req, res) => {
   try {
     const { asset_tag, asset_code, item_name, item_id, quantity, ticket_id } = req.body;
@@ -416,7 +548,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
     const { error: updateErr } = await supabase
       .from('inventory')
       .update({ 
-        quantity: newStock,
+        quantity: newStock, 
         available_quantity: newStock 
       })
       .eq('id', targetItem.id);
@@ -427,7 +559,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
       await supabase
         .from('requests')
         .update({ 
-          borrowed_at: new Date().toISOString(),
+          borrowed_at: new Date().toISOString(), 
           status: 'CLAIMED' 
         })
         .eq('id', parseInt(ticket_id, 10));
@@ -435,7 +567,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
 
     return res.json({ 
       success: true, 
-      message: `Dispatched ${qtyToDeduct} unit(s).`,
+      message: `Dispatched ${qtyToDeduct} unit(s).`, 
       remaining_stock: newStock 
     });
 
@@ -446,7 +578,7 @@ app.post('/api/admin/inventory/deduct', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// 6. REQUISITIONS & ITEM TRACKING (FIXED: NO INVALID 'EMAIL' COLUMN)
+// 6. REQUISITIONS & ITEM TRACKING
 // -----------------------------------------------------------------
 app.post('/api/public/requests', async (req, res) => {
   try {
@@ -458,7 +590,7 @@ app.post('/api/public/requests', async (req, res) => {
       quantity: parseInt(quantity, 10) || 1,
       purpose: purpose || 'Academic Laboratory Project',
       requester_name,
-      identifier,
+      identifier: (identifier || '').trim().toUpperCase(),
       role: role || 'Student',
       department: department || 'BSIT',
       status: 'PENDING',
@@ -478,11 +610,24 @@ app.post('/api/public/requests', async (req, res) => {
 
 app.get('/api/public/my-requests', async (req, res) => {
   const { identifier } = req.query;
+  const cleanId = (identifier || '').trim().toUpperCase();
   const { data, error } = await supabase
     .from('requests')
     .select('*')
-    .eq('identifier', identifier)
+    .eq('identifier', cleanId)
     .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// Support both query parameter and my-requests alias
+app.get('/api/public/requests', async (req, res) => {
+  const { identifier } = req.query;
+  let query = supabase.from('requests').select('*').order('created_at', { ascending: false });
+  if (identifier) {
+    query = query.eq('identifier', identifier.trim().toUpperCase());
+  }
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
 });
@@ -516,7 +661,7 @@ app.patch('/api/admin/requests/:id', async (req, res) => {
   res.json({ success: true, ticket: data });
 });
 
-// Permanently Delete Request
+// Permanently Delete Request Ticket
 app.delete('/api/admin/requests/:id', async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -539,8 +684,8 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
 
     return res.json({ 
       success: true, 
-      message: `Ticket #${ticketId} permanently removed.`,
-      deleted: data
+      message: `Ticket #${ticketId} permanently removed.`, 
+      deleted: data 
     });
   } catch (err) {
     console.error('Delete request error:', err);
@@ -548,7 +693,7 @@ app.delete('/api/admin/requests/:id', async (req, res) => {
   }
 });
 
-// PROCESS RETURN & RESTORE INVENTORY
+// Process Return & Restore Inventory Quantity
 app.post('/api/admin/requests/:id/return', async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -628,65 +773,9 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
   }
 });
 
-// START SERVER
-app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
-// POST /api/borrower/forgot-password
-app.post('/api/borrower/forgot-password', async (req, res) => {
-  const { email } = req.body;
-
-  if (!email) {
-    return res.status(400).json({ error: 'Please enter your registered Gmail address.' });
-  }
-
-  try {
-    // 1. Look up user by email in Supabase
-    const { data: user, error: findError } = await supabase
-      .from('users')
-      .select('id, full_name, email, identifier')
-      .eq('email', email.trim().toLowerCase())
-      .single();
-
-    if (findError || !user) {
-      return res.status(404).json({ error: 'No account found with that email address.' });
-    }
-
-    // 2. Generate a secure temporary password (e.g., CDM-849201)
-    const tempPassword = 'CDM-' + Math.floor(100000 + Math.random() * 900000);
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(tempPassword, salt);
-
-    // 3. Update the user password in Supabase
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ password_hash: hashedPassword })
-      .eq('id', user.id);
-
-    if (updateError) throw updateError;
-
-    // 4. Send temporary password via Nodemailer
-    const mailOptions = {
-      from: '"CDM SmartTrack" <cdmsmarttrack@gmail.com>',
-      to: user.email,
-      subject: 'CDM SmartTrack — Password Recovery',
-      html: `
-        <div style="font-family: Arial, sans-serif; background-color: #0b111e; color: #f8fafc; padding: 24px; border-radius: 12px;">
-          <h2 style="color: #10b981;">CDM SmartTrack Password Reset</h2>
-          <p>Hello <strong>${user.full_name}</strong> (${user.identifier}),</p>
-          <p>We received a request to recover your account credentials.</p>
-          <p>Your temporary login password is:</p>
-          <div style="background: #1e293b; color: #38bdf8; font-size: 20px; font-weight: bold; letter-spacing: 2px; padding: 12px; border-radius: 8px; display: inline-block; margin: 10px 0;">
-            ${tempPassword}
-          </div>
-          <p style="color: #94a3b8; font-size: 13px;">Please log in using this temporary password and update your password immediately in your account settings.</p>
-        </div>
-      `
-    };
-
-    await transporter.sendMail(mailOptions);
-
-    return res.json({ message: `Password reset instructions sent to ${user.email}.` });
-  } catch (err) {
-    console.error('Forgot password error:', err);
-    return res.status(500).json({ error: 'Failed to send recovery email. Please try again.' });
-  }
+// -----------------------------------------------------------------
+// 7. START SERVER
+// -----------------------------------------------------------------
+app.listen(PORT, () => {
+  console.log(`SmartTrack server active on port ${PORT}`);
 });
