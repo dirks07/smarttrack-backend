@@ -630,3 +630,63 @@ app.post('/api/admin/requests/:id/return', async (req, res) => {
 
 // START SERVER
 app.listen(PORT, () => console.log(`SmartTrack server active on port ${PORT}`));
+// POST /api/borrower/forgot-password
+app.post('/api/borrower/forgot-password', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Please enter your registered Gmail address.' });
+  }
+
+  try {
+    // 1. Look up user by email in Supabase
+    const { data: user, error: findError } = await supabase
+      .from('users')
+      .select('id, full_name, email, identifier')
+      .eq('email', email.trim().toLowerCase())
+      .single();
+
+    if (findError || !user) {
+      return res.status(404).json({ error: 'No account found with that email address.' });
+    }
+
+    // 2. Generate a secure temporary password (e.g., CDM-849201)
+    const tempPassword = 'CDM-' + Math.floor(100000 + Math.random() * 900000);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(tempPassword, salt);
+
+    // 3. Update the user password in Supabase
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password_hash: hashedPassword })
+      .eq('id', user.id);
+
+    if (updateError) throw updateError;
+
+    // 4. Send temporary password via Nodemailer
+    const mailOptions = {
+      from: '"CDM SmartTrack" <cdmsmarttrack@gmail.com>',
+      to: user.email,
+      subject: 'CDM SmartTrack — Password Recovery',
+      html: `
+        <div style="font-family: Arial, sans-serif; background-color: #0b111e; color: #f8fafc; padding: 24px; border-radius: 12px;">
+          <h2 style="color: #10b981;">CDM SmartTrack Password Reset</h2>
+          <p>Hello <strong>${user.full_name}</strong> (${user.identifier}),</p>
+          <p>We received a request to recover your account credentials.</p>
+          <p>Your temporary login password is:</p>
+          <div style="background: #1e293b; color: #38bdf8; font-size: 20px; font-weight: bold; letter-spacing: 2px; padding: 12px; border-radius: 8px; display: inline-block; margin: 10px 0;">
+            ${tempPassword}
+          </div>
+          <p style="color: #94a3b8; font-size: 13px;">Please log in using this temporary password and update your password immediately in your account settings.</p>
+        </div>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.json({ message: `Password reset instructions sent to ${user.email}.` });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    return res.status(500).json({ error: 'Failed to send recovery email. Please try again.' });
+  }
+});
