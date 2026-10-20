@@ -60,12 +60,12 @@ function saveDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// Health Check
+// Root Health Check
 app.get('/', (req, res) => {
   res.json({ success: true, message: "SmartTrack Core API running smoothly." });
 });
 
-// Explicit Registration Endpoint
+// Borrower Registration Endpoint
 app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/signup'], async (req, res) => {
   try {
     const { full_name, identifier, email, department, password } = req.body;
@@ -152,7 +152,7 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
       await transporter.sendMail(mailOptions);
       console.log(`[Nodemailer] Activation email sent to: ${cleanEmail}`);
     } else {
-      console.warn('[Warning] GMAIL_APP_PASS not set; email omitted.');
+      console.warn('[Warning] GMAIL_APP_PASS not set in environment variables.');
     }
 
     return res.json({
@@ -167,7 +167,7 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
   }
 });
 
-// Verification Route
+// Email Link Verification
 app.get(['/api/borrowers/verify-email', '/api/borrower/verify-email'], (req, res) => {
   const { token } = req.query;
   const db = loadDb();
@@ -210,7 +210,7 @@ app.get(['/api/borrowers/verify-email', '/api/borrower/verify-email'], (req, res
   `);
 });
 
-// Login Route
+// Borrower Sign In
 app.post(['/api/borrowers/login', '/api/borrower/login', '/api/public/login'], (req, res) => {
   const { identifier, password } = req.body;
   const db = loadDb();
@@ -239,12 +239,12 @@ app.post(['/api/borrowers/login', '/api/borrower/login', '/api/public/login'], (
   });
 });
 
-// Inventory Catalog
+// Public Inventory
 app.get('/api/public/inventory', (req, res) => {
   res.json(loadDb().inventory);
 });
 
-// Borrow Requests
+// Public Requests
 app.post('/api/public/requests', (req, res) => {
   const { requester_name, identifier, item_name, quantity, purpose } = req.body;
   const db = loadDb();

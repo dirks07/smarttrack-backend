@@ -3,23 +3,26 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const brevo = require('@getbrevo/brevo');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'data.json');
 const BASE_URL = process.env.RENDER_BASE_URL || 'https://smarttrack-backend-v614.onrender.com';
-const SENDER_EMAIL = process.env.SENDER_EMAIL || 'dirkshaned@gmail.com';
+const GMAIL_USER = process.env.GMAIL_USER || process.env.SENDER_EMAIL || 'dirkshaned@gmail.com';
+const GMAIL_APP_PASS = process.env.GMAIL_APP_PASS || '';
 
-// Initialize Brevo Transactional API
-const apiInstance = new brevo.TransactionalEmailsApi();
-apiInstance.setApiKey(
-  brevo.TransactionalEmailsApiApiKeys.apiKey,
-  process.env.BREVO_API_KEY || ''
-);
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: GMAIL_USER,
+    pass: GMAIL_APP_PASS,
+  },
+});
 
 const initialData = {
   admins: [{ id: 1, full_name: "Lead Custodian", username: "admin", password: "password123" }],
@@ -57,99 +60,114 @@ function saveDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// ----------------- BORROWER REGISTRATION -----------------
-app.post(['/api/public/signup', '/api/borrower/register', '/api/borrowers/register'], async (req, res) => {
-  const { full_name, identifier, email, department, password } = req.body;
-  if (!full_name || !identifier || !password || !email) {
-    return res.status(400).json({ error: "All registration fields are required." });
-  }
-
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanId = identifier.trim().toLowerCase();
-  const db = loadDb();
-
-  if (db.requesters.find(u => u.identifier.toLowerCase() === cleanId)) {
-    return res.status(409).json({ error: "Student / Faculty ID is already registered." });
-  }
-  if (db.requesters.find(u => (u.email || '').toLowerCase() === cleanEmail)) {
-    return res.status(409).json({ error: "Gmail address is already registered." });
-  }
-
-  const activationToken = crypto.randomBytes(24).toString('hex');
-  const newRequester = {
-    id: db.requesters.length + 1,
-    full_name: full_name.trim(),
-    identifier: identifier.trim(),
-    email: cleanEmail,
-    role: 'Student',
-    department: department ? department.trim() : 'BSIT',
-    password,
-    is_active: false,
-    activation_token: activationToken
-  };
-
-  db.requesters.push(newRequester);
-  saveDb(db);
-
-  const activationLink = `${BASE_URL}/api/borrowers/verify-email?token=${activationToken}`;
-
-  // Exact HTML Email matching the dark UI design in your screenshot
-  try {
-    const sendSmtpEmail = new brevo.SendSmtpEmail();
-    sendSmtpEmail.sender = { name: "CDM SmartTrack", email: SENDER_EMAIL };
-    sendSmtpEmail.to = [{ email: cleanEmail, name: newRequester.full_name }];
-    sendSmtpEmail.subject = "Verify your CDM SmartTrack Account";
-    sendSmtpEmail.htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <body style="margin: 0; padding: 20px; background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-        <div style="max-width: 480px; margin: 0 auto; background-color: #161b22; border-radius: 16px; border: 1px solid #30363d; overflow: hidden; color: #ffffff;">
-          <div style="height: 4px; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
-          <div style="padding: 32px 24px; text-align: center;">
-            <div style="font-size: 38px; margin-bottom: 12px;">📦</div>
-            <h2 style="color: #ffffff; margin: 0 0 4px 0; font-size: 20px; font-weight: 800; letter-spacing: 0.5px;">CDM SMARTTRACK</h2>
-            <p style="color: #8b949e; font-size: 13px; margin: 0 0 24px 0;">Colegio de Montalban Borrower Portal</p>
-            <div style="border-top: 1px solid #21262d; margin: 0 0 24px 0;"></div>
-            
-            <p style="text-align: left; color: #f0f6fc; font-size: 15px; font-weight: 700; margin: 0 0 12px 0;">
-              Hello ${newRequester.full_name} (Student Borrower),
-            </p>
-            <p style="text-align: left; color: #8b949e; font-size: 14px; line-height: 1.5; margin: 0 0 28px 0;">
-              Your account registration has been initialized. Tap the button below to verify your email and activate your access to laboratory equipment borrowing.
-            </p>
-
-            <a href="${activationLink}" target="_blank" style="background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 15px; display: inline-block; width: 80%;">
-              Activate My Account &rarr;
-            </a>
-
-            <div style="margin-top: 28px; border: 1px dashed #30363d; border-radius: 10px; padding: 12px; background-color: #0d1117;">
-              <p style="color: #8b949e; font-size: 12px; margin: 0;">
-                ⏳ This link expires in <strong>15 minutes</strong>. If you did not initiate this request, you can safely ignore this email.
-              </p>
-            </div>
-          </div>
-          <div style="background-color: #0d1117; padding: 12px; text-align: center; border-top: 1px solid #21262d;">
-            <p style="color: #484f58; font-size: 11px; margin: 0;">Colegio de Montalban • Laboratory & Equipment Management</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
-  } catch (err) {
-    console.error('Brevo API Dispatch Error:', err?.response?.body || err?.message || err);
-  }
-
-  res.json({
-    success: true,
-    requires_activation: true,
-    email: cleanEmail,
-    message: "Activation Link Sent!"
-  });
+// Root Health Check
+app.get('/', (req, res) => {
+  res.json({ success: true, message: "SmartTrack Core API running smoothly." });
 });
 
-// ----------------- ACTIVATION WEB CONFIRMATION -----------------
+// Borrower Registration Endpoint
+app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/signup'], async (req, res) => {
+  try {
+    const { full_name, identifier, email, department, password } = req.body;
+    if (!full_name || !identifier || !password || !email) {
+      return res.status(400).json({ success: false, error: "All registration fields are required." });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanId = identifier.trim().toLowerCase();
+    const db = loadDb();
+
+    const existingIndex = db.requesters.findIndex(
+      u => (u.identifier || '').toLowerCase() === cleanId || (u.email || '').toLowerCase() === cleanEmail
+    );
+
+    const activationToken = crypto.randomBytes(24).toString('hex');
+    const userRecord = {
+      id: existingIndex >= 0 ? db.requesters[existingIndex].id : db.requesters.length + 1,
+      full_name: full_name.trim(),
+      identifier: identifier.trim(),
+      email: cleanEmail,
+      role: 'Student',
+      department: department ? department.trim() : 'BSIT',
+      password,
+      is_active: false,
+      activation_token: activationToken
+    };
+
+    if (existingIndex >= 0) {
+      if (db.requesters[existingIndex].is_active) {
+        return res.status(409).json({ success: false, error: "Account already active. Please sign in." });
+      }
+      db.requesters[existingIndex] = userRecord;
+    } else {
+      db.requesters.push(userRecord);
+    }
+    saveDb(db);
+
+    const activationLink = `${BASE_URL}/api/borrowers/verify-email?token=${activationToken}`;
+
+    const mailOptions = {
+      from: `"CDM SmartTrack" <${GMAIL_USER}>`,
+      to: cleanEmail,
+      subject: "Verify your CDM SmartTrack Account",
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <body style="margin: 0; padding: 20px; background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+          <div style="max-width: 480px; margin: 0 auto; background-color: #161b22; border-radius: 16px; border: 1px solid #30363d; overflow: hidden; color: #ffffff;">
+            <div style="height: 4px; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
+            <div style="padding: 32px 24px; text-align: center;">
+              <div style="font-size: 38px; margin-bottom: 12px;">📦</div>
+              <h2 style="color: #ffffff; margin: 0 0 4px 0; font-size: 20px; font-weight: 800; letter-spacing: 0.5px;">CDM SMARTTRACK</h2>
+              <p style="color: #8b949e; font-size: 13px; margin: 0 0 24px 0;">Colegio de Montalban Borrower Portal</p>
+              <div style="border-top: 1px solid #21262d; margin: 0 0 24px 0;"></div>
+              
+              <p style="text-align: left; color: #f0f6fc; font-size: 15px; font-weight: 700; margin: 0 0 12px 0;">
+                Hello ${userRecord.full_name} (Student Borrower),
+              </p>
+              <p style="text-align: left; color: #8b949e; font-size: 14px; line-height: 1.5; margin: 0 0 28px 0;">
+                Your account registration has been initialized. Tap the button below to verify your email and activate your access to laboratory equipment borrowing.
+              </p>
+
+              <a href="${activationLink}" target="_blank" style="background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 15px; display: inline-block; width: 80%;">
+                Activate My Account &rarr;
+              </a>
+
+              <div style="margin-top: 28px; border: 1px dashed #30363d; border-radius: 10px; padding: 12px; background-color: #0d1117;">
+                <p style="color: #8b949e; font-size: 12px; margin: 0;">
+                  ⏳ This link expires in <strong>15 minutes</strong>. If you did not initiate this request, you can safely ignore this email.
+                </p>
+              </div>
+            </div>
+            <div style="background-color: #0d1117; padding: 12px; text-align: center; border-top: 1px solid #21262d;">
+              <p style="color: #484f58; font-size: 11px; margin: 0;">Colegio de Montalban • Laboratory & Equipment Management</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `
+    };
+
+    if (GMAIL_APP_PASS) {
+      await transporter.sendMail(mailOptions);
+      console.log(`[Nodemailer] Activation email sent to: ${cleanEmail}`);
+    } else {
+      console.warn('[Warning] GMAIL_APP_PASS not set in environment variables.');
+    }
+
+    return res.json({
+      success: true,
+      requires_activation: true,
+      email: cleanEmail,
+      message: "Activation Link Sent!"
+    });
+  } catch (error) {
+    console.error('[Registration Error]:', error);
+    return res.status(500).json({ success: false, error: error.message || 'Error processing registration.' });
+  }
+});
+
+// Email Link Verification
 app.get(['/api/borrowers/verify-email', '/api/borrower/verify-email'], (req, res) => {
   const { token } = req.query;
   const db = loadDb();
@@ -157,12 +175,15 @@ app.get(['/api/borrowers/verify-email', '/api/borrower/verify-email'], (req, res
 
   if (!user) {
     return res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
       <body style="background:#0d1117;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:80vh;text-align:center;">
-        <div style="background:#161b22;padding:32px;border-radius:12px;border:1px solid #30363d;">
-          <h2 style="color:#f85149;">Invalid or Expired Link</h2>
+        <div style="background:#161b22;padding:32px;border-radius:12px;border:1px solid #30363d;max-width:400px;">
+          <h2 style="color:#f85149;margin-top:0;">Invalid or Expired Link</h2>
           <p style="color:#8b949e;">Your account may already be activated. Return to the app and sign in.</p>
         </div>
       </body>
+      </html>
     `);
   }
 
@@ -189,18 +210,19 @@ app.get(['/api/borrowers/verify-email', '/api/borrower/verify-email'], (req, res
   `);
 });
 
-// ----------------- BORROWER LOGIN -----------------
-app.post(['/api/public/login', '/api/borrower/login', '/api/borrowers/login'], (req, res) => {
+// Borrower Sign In
+app.post(['/api/borrowers/login', '/api/borrower/login', '/api/public/login'], (req, res) => {
   const { identifier, password } = req.body;
   const db = loadDb();
   const user = db.requesters.find(
-    u => u.identifier.toLowerCase() === (identifier || '').trim().toLowerCase() && u.password === password
+    u => (u.identifier || '').toLowerCase() === (identifier || '').trim().toLowerCase() && u.password === password
   );
 
-  if (!user) return res.status(401).json({ error: "Invalid ID or password." });
+  if (!user) return res.status(401).json({ success: false, error: "Invalid ID or password." });
   if (user.is_active === false) {
     return res.status(403).json({
-      error: "Account not activated. Please check your Gmail and tap the activation button.",
+      success: false,
+      error: "Account not activated. Please open your Gmail and tap the activation button.",
       requires_activation: true
     });
   }
@@ -217,17 +239,17 @@ app.post(['/api/public/login', '/api/borrower/login', '/api/borrowers/login'], (
   });
 });
 
-// ----------------- CATALOG / INVENTORY -----------------
+// Public Inventory
 app.get('/api/public/inventory', (req, res) => {
   res.json(loadDb().inventory);
 });
 
-// ----------------- BORROW TICKETS / REQUESTS -----------------
+// Public Requests
 app.post('/api/public/requests', (req, res) => {
   const { requester_name, identifier, item_name, quantity, purpose } = req.body;
   const db = loadDb();
 
-  const ticketNumber = db.requests.length + 33; // Matches ticket numbering pattern (#33)
+  const ticketNumber = db.requests.length + 33;
   const newTicket = {
     id: ticketNumber,
     requester_name,
@@ -244,7 +266,7 @@ app.post('/api/public/requests', (req, res) => {
   res.json({ success: true, ticket_id: newTicket.id });
 });
 
-app.get(['/api/admin/requests', '/api/public/requests'], (req, res) => {
+app.get(['/api/public/requests', '/api/admin/requests'], (req, res) => {
   const db = loadDb();
   const { identifier } = req.query;
   if (identifier) {
@@ -253,23 +275,23 @@ app.get(['/api/admin/requests', '/api/public/requests'], (req, res) => {
   res.json(db.requests);
 });
 
-// Update ticket status (PENDING -> APPROVED -> CLAIMED -> RETURNED)
-app.patch('/api/admin/requests/:id', (req, res) => {
-  const { status, condition_audit } = req.body;
-  const db = loadDb();
-  const ticket = db.requests.find(r => r.id === parseInt(req.params.id));
-  if (ticket) {
-    ticket.status = status;
-    if (condition_audit) ticket.condition_audit = condition_audit;
-    if (status === 'RETURNED') ticket.returned_on = new Date().toLocaleDateString('en-US');
-    saveDb(db);
-    res.json({ success: true });
-  } else {
-    res.status(404).json({ error: "Ticket not found" });
-  }
+// Global JSON 404 & 500 Catch-Alls
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `Endpoint ${req.method} ${req.originalUrl} not found on this server.`
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error('[Unhandled Error]:', err);
+  res.status(500).json({
+    success: false,
+    error: err.message || 'Internal Server Error'
+  });
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`SmartTrack Core API running on port ${PORT}`);
+  console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
 });
