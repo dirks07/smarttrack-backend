@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
-    "@getbrevo/brevo": "^6.2.0",
     "expo": "~57.0.0",
+    "nodemailer": "^10.1.7",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-qrcode-svg": "^6.3.0",
