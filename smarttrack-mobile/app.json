@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "CDM SmartTrack",
+    "slug": "smart-track",
+    "version": "1.0.2",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.dirk0701steam.smarttrackv2"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "21269e68-6a3b-45e8-a2a1-115500c8f7c5"
+      }
+    }
+  }
+}

@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartTrack | Colegio de Montalban Monitoring System</title>
+  <style>
+    /* ==========================================================================
+       CDM SmartTrack Landing Portal — Luminous Glassmorphism Theme
+       ========================================================================== */
+    :root {
+      --bg-dark: #060913;
+      --card-bg: rgba(15, 23, 42, 0.72);
+      --card-bg-hover: rgba(30, 41, 59, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --border-highlight: rgba(16, 185, 129, 0.4);
+      --primary-green: #10b981;
+      --primary-green-hover: #059669;
+      --primary-glow: rgba(16, 185, 129, 0.35);
+      --accent-blue: #38bdf8;
+      --accent-blue-glow: rgba(56, 189, 248, 0.3);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --glass-blur: blur(16px);
+      --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 15% 15%, rgba(16, 185, 129, 0.12) 0px, transparent 45%),
+        radial-gradient(at 85% 85%, rgba(56, 189, 248, 0.1) 0px, transparent 50%),
+        radial-gradient(at 50% 50%, rgba(15, 23, 42, 0.6) 0px, transparent 100%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* NAVIGATION */
+    nav {
+      background: rgba(6, 9, 19, 0.75);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border-bottom: 1px solid var(--card-border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 16px 36px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, var(--primary-green) 0%, var(--primary-green-hover) 100%);
+      color: #022c22;
+      font-weight: 900;
+      font-size: 11px;
+      padding: 5px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.8px;
+      box-shadow: 0 0 12px var(--primary-glow);
+    }
+
+    .brand-title {
+      font-size: 1.2rem;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      background: linear-gradient(90deg, #ffffff 40%, var(--primary-green) 100%);
+      -webkit-background-clip: text;
+       background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 600;
+      transition: var(--transition);
+      position: relative;
+    }
+
+    .nav-links a:hover {
+      color: #fff;
+    }
+
+    .btn-nav {
+      background: rgba(30, 41, 59, 0.6) !important;
+      border: 1px solid rgba(255, 255, 255, 0.12) !important;
+      color: #fff !important;
+      padding: 8px 18px;
+      border-radius: 9px;
+      backdrop-filter: blur(8px);
+    }
+
+    .btn-nav:hover {
+      border-color: var(--primary-green) !important;
+      box-shadow: 0 0 12px var(--primary-glow);
+      transform: translateY(-1px);
+    }
+
+    /* HERO SECTION */
+    .hero {
+      max-width: 1000px;
+      margin: 80px auto 50px auto;
+      text-align: center;
+      padding: 0 24px;
+    }
+
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid var(--border-highlight);
+      color: var(--primary-green);
+      font-size: 0.8rem;
+      font-weight: 800;
+      padding: 6px 18px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 24px;
+      box-shadow: 0 0 18px var(--primary-glow);
+    }
+
+    .hero-tag::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--primary-green);
+      box-shadow: 0 0 8px var(--primary-green);
+    }
+
+    .hero h1 {
+      font-size: 3.2rem;
+      font-weight: 900;
+      color: #ffffff;
+      line-height: 1.15;
+      letter-spacing: -1px;
+      margin-bottom: 20px;
+      text-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+    }
+
+    .hero p {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      max-width: 720px;
+      margin: 0 auto 36px auto;
+      line-height: 1.7;
+    }
+
+    .hero-cta {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary-green) 0%, var(--primary-green-hover) 100%);
+      color: #022c22;
+      font-weight: 800;
+      padding: 15px 32px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-size: 0.96rem;
+      transition: var(--transition);
+      box-shadow: 0 6px 20px var(--primary-glow);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-primary:hover {
+      filter: brightness(1.1);
+      transform: translateY(-2px);
+      box-shadow: 0 10px 28px rgba(16, 185, 129, 0.5);
+    }
+
+    .btn-secondary {
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid var(--card-border);
+      color: #cbd5e1;
+      font-weight: 700;
+      padding: 15px 32px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-size: 0.96rem;
+      transition: var(--transition);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--accent-blue);
+      color: #fff;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(56, 189, 248, 0.2);
+    }
+
+    /* STEP-BY-STEP WORKFLOW GUIDE */
+    .section-container {
+      max-width: 1100px;
+      margin: 90px auto;
+      padding: 0 24px;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 50px;
+    }
+
+    .section-header h2 {
+      font-size: 2.2rem;
+      font-weight: 900;
+      color: #fff;
+      letter-spacing: -0.5px;
+      margin-bottom: 12px;
+    }
+
+    .section-header p {
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 22px;
+    }
+
+    .step-card {
+      background: var(--card-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 28px 24px;
+      position: relative;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      transition: var(--transition);
+      overflow: hidden;
+    }
+
+    .step-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary-green), transparent);
+      opacity: 0;
+      transition: var(--transition);
+    }
+
+    .step-card:hover {
+      background: var(--card-bg-hover);
+      transform: translateY(-5px);
+      border-color: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.7), 0 0 25px rgba(16, 185, 129, 0.15);
+    }
+
+    .step-card:hover::before {
+      opacity: 1;
+    }
+
+    .step-num {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--border-highlight);
+      color: var(--primary-green);
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.15rem;
+      margin-bottom: 20px;
+      box-shadow: 0 0 12px var(--primary-glow);
+    }
+
+    .step-card h3 {
+      font-size: 1.18rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 12px;
+      letter-spacing: -0.2px;
+    }
+
+    .step-card p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* POLICIES & GUIDELINES */
+    .policy-box {
+      background: var(--card-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      padding: 36px;
+      margin-top: 40px;
+      box-shadow: 0 15px 40px -10px rgba(0, 0, 0, 0.6);
+    }
+
+    .policy-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      transition: var(--transition);
+    }
+
+    .policy-item:first-child {
+      padding-top: 0;
+    }
+
+    .policy-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .policy-item:hover {
+      transform: translateX(4px);
+    }
+
+    .policy-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--border-highlight);
+      color: var(--primary-green);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 900;
+      flex-shrink: 0;
+      margin-top: 2px;
+      box-shadow: 0 0 10px var(--primary-glow);
+    }
+
+    .policy-text h4 {
+      font-size: 1.05rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+
+    .policy-text p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* DOWNLOAD SECTION AT THE BOTTOM */
+    .download-section {
+      background: linear-gradient(180deg, transparent 0%, rgba(16, 185, 129, 0.06) 100%);
+      border-top: 1px solid var(--card-border);
+      padding: 90px 24px 110px 24px;
+      text-align: center;
+      position: relative;
+    }
+
+    .download-card {
+      max-width: 680px;
+      margin: 0 auto;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 28px;
+      padding: 48px 36px;
+      box-shadow: 0 30px 70px -15px rgba(0, 0, 0, 0.8), 0 0 40px rgba(16, 185, 129, 0.1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .download-card::after {
+      content: '';
+      position: absolute;
+      bottom: -60px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 250px;
+      height: 100px;
+      background: var(--primary-green);
+      filter: blur(80px);
+      opacity: 0.25;
+      pointer-events: none;
+    }
+
+    .download-badge {
+      display: inline-block;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--accent-blue);
+      font-size: 0.75rem;
+      font-weight: 800;
+      padding: 5px 14px;
+      border-radius: 9999px;
+      margin-bottom: 18px;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      box-shadow: 0 0 12px var(--accent-blue-glow);
+    }
+
+    .download-card h2 {
+      font-size: 2.1rem;
+      color: #fff;
+      font-weight: 900;
+      margin-bottom: 14px;
+      letter-spacing: -0.5px;
+    }
+
+    .download-card p {
+      color: var(--text-muted);
+      font-size: 0.98rem;
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+
+    .btn-download-app {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: linear-gradient(135deg, var(--primary-green) 0%, var(--primary-green-hover) 100%);
+      color: #022c22;
+      font-weight: 800;
+      font-size: 1.05rem;
+      padding: 16px 40px;
+      border-radius: 14px;
+      text-decoration: none;
+      transition: var(--transition);
+      box-shadow: 0 8px 24px var(--primary-glow);
+    }
+
+    .btn-download-app:hover {
+      filter: brightness(1.12);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 32px rgba(16, 185, 129, 0.55);
+    }
+
+    /* FOOTER */
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 28px;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      background: rgba(6, 9, 19, 0.9);
+    }
+
+    /* Responsive Queries */
+    @media (max-width: 768px) {
+      nav { padding: 14px 20px; }
+      .hero h1 { font-size: 2.2rem; }
+      .section-header h2 { font-size: 1.8rem; }
+      .download-card { padding: 36px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAVIGATION -->
+  <nav>
+    <div class="brand">
+      <span class="brand-badge">CDM</span>
+      <span class="brand-title">SmartTrack</span>
+    </div>
+    <div class="nav-links">
+      <a href="#how-it-works">How It Works</a>
+      <a href="#guidelines">Guidelines</a>
+      <a href="#download" class="btn-nav">Download App</a>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <header class="hero">
+    <span class="hero-tag">Colegio de Montalban Capstone Project</span>
+    <h1>SmartTrack Equipment Monitoring System</h1>
+    <p>
+      An automated, website-based monitoring and requisition platform designed for Colegio de Montalban students, instructors, and property custodians to borrow, dispatch, and track school assets with barcode accuracy.
+    </p>
+    <div class="hero-cta">
+      <a href="#how-it-works" class="btn-primary">Read Guidelines First</a>
+      <a href="#download" class="btn-secondary">Get Application File ↓</a>
+    </div>
+  </header>
+
+  <!-- HOW IT WORKS SECTION -->
+  <section id="how-it-works" class="section-container">
+    <div class="section-header">
+      <h2>How the System Works</h2>
+      <p>Follow these 4 simple steps to request, receive, and return equipment safely.</p>
+    </div>
+
+    <div class="workflow-grid">
+      <div class="step-card">
+        <div class="step-num">1</div>
+        <h3>Submit Online Ticket</h3>
+        <p>Students and faculty log into the portal, select the item (projector, HDMI, presentation clicker), quantity, and purpose, then submit a request.</p>
+      </div>
+
+      <div class="step-card">
+        <div class="step-num">2</div>
+        <h3>Custodian Review</h3>
+        <p>The Property & Custodian office reviews availability. Once marked <strong>Approved</strong>, the ticket transfers to the physical dispatch desk.</p>
+      </div>
+
+      <div class="step-card">
+        <div class="step-num">3</div>
+        <h3>Counter Pickup</h3>
+        <p>Show your student or employee ID at the Custodian Terminal. The officer scans the physical barcode/asset tag and releases the item.</p>
+      </div>
+
+      <div class="step-card">
+        <div class="step-num">4</div>
+        <h3>Inspection & Return</h3>
+        <p>Return the asset immediately after your class or presentation. The custodian checks the item condition before closing the ticket.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- BORROWER GUIDELINES -->
+  <section id="guidelines" class="section-container">
+    <div class="section-header">
+      <h2>Rules & Guidelines for Borrowers</h2>
+      <p>Ensure smooth transactions by reviewing the custodian policies below.</p>
+    </div>
+
+    <div class="policy-box">
+      <div class="policy-item">
+        <span class="policy-icon">✓</span>
+        <div class="policy-text">
+          <h4>Official School Identification Required</h4>
+          <p>Always present a valid CDM Student Identification Card or Faculty ID when claiming reserved items at the Property & Supply counter.</p>
+        </div>
+      </div>
+
+      <div class="policy-item">
+        <span class="policy-icon">✓</span>
+        <div class="policy-text">
+          <h4>Care and Proper Handling</h4>
+          <p>Inspect equipment upon pickup. Ensure cables, lenses, and remote accessories remain intact and undamaged throughout your usage.</p>
+        </div>
+      </div>
+
+      <div class="policy-item">
+        <span class="policy-icon">✓</span>
+        <div class="policy-text">
+          <h4>Prompt Return & Condition Audit</h4>
+          <p>Return borrowed assets promptly within the designated schedule so the next class or faculty member can use them without delay.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- APPLICATION DOWNLOAD SECTION (AT THE BOTTOM) -->
+  <section id="download" class="download-section">
+    <div class="download-card">
+      <span class="download-badge">Official Release</span>
+      <h2>Download SmartTrack Application</h2>
+      <p>
+        Ready to get started? Access the official SmartTrack system documentation and application files via the secure link below.
+      </p>
+
+      <!-- APPLICATION DOWNLOAD LINK PROVIDED BY USER -->
+      <a 
+        href="https://drive.google.com/file/d/1mugVD97WHEiLvSn9Z85Spk3nXkpzJ-kD/view?usp=drivesdk" 
+        target="_blank" 
+        rel="noopener noreferrer" 
+        class="btn-download-app"
+      >
+        <span>📥</span> Open & Download Application File
+      </a>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <p>&copy; 2026 Colegio de Montalban • SmartTrack Capstone Research Project. All rights reserved.</p>
+  </footer>
+
+</body>
+</html>

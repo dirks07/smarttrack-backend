@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Custodian Terminal | SmartTrack</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      background-color: #050a18;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+    }
+
+    .top-bar {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .back-btn {
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 8px 14px;
+      background: #0b1329;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .back-btn:hover {
+      color: #fff;
+      background: #1e293b;
+    }
+
+    .terminal-container {
+      width: 100%;
+      max-width: 520px;
+      background-color: #0b1329;
+      border: 1px solid #1e293b;
+      border-radius: 24px;
+      padding: 22px;
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45);
+    }
+
+    .terminal-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #ffffff;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    /* Tabs */
+    .tabs-nav {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+      background-color: #070d1e;
+      padding: 6px;
+      border-radius: 14px;
+      border: 1px solid #1e293b;
+      margin-bottom: 22px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      padding: 9px 4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tab-btn.active {
+      background-color: #1e293b;
+      color: #34d399;
+    }
+
+    /* Headers */
+    .queue-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #94a3b8;
+      margin-bottom: 14px;
+      text-transform: uppercase;
+    }
+    .refresh-btn {
+      background: none;
+      border: none;
+      color: #34d399;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .ticket-card {
+      background-color: #070d1e;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .btn-dispatch {
+      background-color: #059669;
+      border: none;
+      color: #fff;
+      font-weight: 600;
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .btn-dispatch:hover { background-color: #10b981; }
+
+    .btn-return {
+      background-color: #2563eb;
+      border: none;
+      color: #fff;
+      font-weight: 600;
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .btn-return:hover { background-color: #3b82f6; }
+
+    .btn-delete {
+      background: rgba(159, 18, 57, 0.3);
+      border: 1px solid rgba(225, 29, 72, 0.4);
+      color: #fda4af;
+      font-weight: 600;
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-delete:hover {
+      background: rgba(225, 29, 72, 0.5);
+      color: #ffffff;
+    }
+
+    /* Forms */
+    .processing-ticket-banner {
+      background: rgba(6, 78, 59, 0.4);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #6ee7b7;
+      text-align: center;
+      padding: 9px;
+      border-radius: 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .input-row {
+      display: flex;
+      gap: 8px;
+    }
+    input[type="text"], input[type="number"], select {
+      width: 100%;
+      background-color: #070d1e;
+      border: 1px solid #1e293b;
+      padding: 11px 14px;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 0.9rem;
+    }
+    .btn-verify {
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      color: #fff;
+      font-weight: 600;
+      padding: 0 16px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .verified-panel {
+      background-color: #070d1e;
+      border: 1px solid #1e293b;
+      border-radius: 14px;
+      padding: 16px;
+      margin-top: 14px;
+    }
+    .verified-panel-top {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .tag-badge {
+      font-family: monospace;
+      font-size: 0.8rem;
+      background: #064e3b;
+      color: #6ee7b7;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .status-badge {
+      background: #10b981;
+      color: #022c22;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+    .btn-confirm-release {
+      width: 100%;
+      background-color: #059669;
+      border: none;
+      color: #ffffff;
+      padding: 12px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      cursor: pointer;
+      margin-top: 14px;
+      transition: background 0.15s;
+    }
+    .btn-confirm-release:hover {
+      background-color: #10b981;
+    }
+
+    .btn-confirm-return {
+      width: 100%;
+      background-color: #2563eb;
+      border: none;
+      color: #ffffff;
+      padding: 12px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      cursor: pointer;
+      margin-top: 14px;
+      transition: background 0.15s;
+    }
+    .btn-confirm-return:hover {
+      background-color: #3b82f6;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Return Link (Direct bypass back to active dashboard) -->
+  <div class="top-bar">
+    <button type="button" class="back-btn" onclick="returnToAdminDashboard()">
+      &larr; Back to Admin Dashboard
+    </button>
+  </div>
+
+  <div class="terminal-container">
+    <h1 class="terminal-title">Custodian Terminal</h1>
+
+    <!-- Tabs switcher -->
+    <div class="tabs-nav">
+      <button type="button" id="tab-btn-queue" class="tab-btn active" onclick="switchTab('queue')">
+        Pickup Queue (<span id="queue-count">0</span>)
+      </button>
+      <button type="button" id="tab-btn-returns" class="tab-btn" onclick="switchTab('returns')">
+        Returns (<span id="returns-count">0</span>)
+      </button>
+      <button type="button" id="tab-btn-dispatch" class="tab-btn" onclick="switchTab('dispatch')">
+        Asset Dispatch
+      </button>
+    </div>
+
+    <!-- TAB 1: Queue View -->
+    <div id="view-queue">
+      <div class="queue-header-row">
+        <span>Pickup Queue (<span id="queue-count-sub">0</span>)</span>
+        <button type="button" class="refresh-btn" onclick="getAllRequestsData()">Refresh List</button>
+      </div>
+      <div id="queue-list-container">
+        <div style="text-align: center; color: #64748b; padding: 36px 0; font-size: 0.85rem;">
+          Loading requests...
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Process Returns View -->
+    <div id="view-returns" style="display: none;">
+      <div class="queue-header-row">
+        <span>Items Currently In Custody (<span id="returns-count-sub">0</span>)</span>
+        <button type="button" class="refresh-btn" onclick="getAllRequestsData()">Refresh List</button>
+      </div>
+
+      <div id="returns-modal-card" class="verified-panel" style="display: none; margin-bottom: 16px; border-color: #2563eb;">
+        <h3 id="return-item-title" style="color: #fff; font-size: 1.05rem; margin-bottom: 4px;">Item Title</h3>
+        <p style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 12px;">Borrower: <strong id="return-borrower-label" style="color: #38bdf8;">--</strong></p>
+
+        <div class="form-group">
+          <label>Item Condition Inspection</label>
+          <select id="return-condition-select">
+            <option value="Good Condition">Good Condition (Restores Stock to Catalog)</option>
+            <option value="Bad Condition / Damaged">Bad Condition / Damaged (Does not restore)</option>
+            <option value="Lost / Unreturned">Lost / Broken (Does not restore)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Audit Remarks / Notes</label>
+          <input type="text" id="return-remarks-input" placeholder="e.g. Checked cables, cleaned, complete parts" />
+        </div>
+
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px;">
+          <button type="button" class="btn-confirm-return" onclick="handleExecuteReturn()">
+            Confirm Item Return
+          </button>
+          <button type="button" class="btn-delete" style="margin-top: 14px;" onclick="cancelReturnMode()">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <div id="returns-list-container">
+        <div style="text-align: center; color: #64748b; padding: 36px 0; font-size: 0.85rem;">
+          Loading active items...
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Dispatch View -->
+    <div id="view-dispatch" style="display: none;">
+      <div id="ticket-indicator" class="processing-ticket-banner" style="display: none;">
+        Processing Approved Ticket <span id="ticket-number-label">#--</span>
+      </div>
+
+      <div class="form-group">
+        <label>Asset Tag / Barcode</label>
+        <div class="input-row">
+          <input type="text" id="input-tag" placeholder="Scan or enter Tag" />
+          <button type="button" class="btn-verify" onclick="handleVerify()">Verify Tag</button>
+        </div>
+      </div>
+
+      <div id="verified-card" class="verified-panel" style="display: none;">
+        <div class="verified-panel-top">
+          <span class="tag-badge" id="display-tag">--</span>
+          <span class="status-badge" id="display-status">Available</span>
+        </div>
+        <h3 id="display-name" style="color: #fff; font-size: 1.05rem; margin-bottom: 4px;">Item Title</h3>
+        <p style="font-size: 0.8rem; color: #94a3b8;">Category: <span id="display-cat">Equipment</span></p>
+        <p style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 12px;">Available in Stock: <strong id="display-stock" style="color: #34d399;">--</strong></p>
+
+        <div class="form-group">
+          <label>Quantity to Release</label>
+          <input type="number" id="input-qty" value="1" min="1" />
+        </div>
+
+        <div class="form-group">
+          <label>Borrower Name / Details</label>
+          <input type="text" id="input-borrower" placeholder="Name (Student ID)" />
+        </div>
+
+        <button type="button" class="btn-confirm-release" onclick="handleConfirmRelease()">
+          Confirm Release to Borrower
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND = 'https://smarttrack-backend-v6l4.onrender.com';
+    let queueData = [];
+    let activeLoanData = [];
+    let currentActiveTicket = null;
+    let currentReturnTicket = null;
+
+    // DIRECT RETURN TO ADMIN DASHBOARD (WITHOUT RELOGIN)
+    function returnToAdminDashboard() {
+      try {
+        localStorage.setItem('smarttrack_admin_logged_in', 'true');
+      } catch (e) {}
+
+      window.location.href = 'index.html';
+    }
+
+    // FETCH ALL REQUESTS
+    async function getAllRequestsData() {
+      const queueContainer = document.getElementById('queue-list-container');
+      const returnsContainer = document.getElementById('returns-list-container');
+
+      try {
+        const res = await fetch(`${BACKEND}/api/admin/all-requests`);
+        if (!res.ok) throw new Error('Network error');
+        const allRequests = await res.json();
+
+        // Queue: Approved or Pending Pickup
+        queueData = allRequests
+          .filter(t => t.status === 'APPROVED' || t.status === 'PENDING')
+          .map(t => ({
+            id: t.id,
+            ticketNo: `#${t.id}`,
+            borrowerName: t.requester_name || 'Student / Faculty',
+            borrowerId: t.identifier || 'N/A',
+            dept: `${t.role || 'Borrower'} • ${t.department || 'General'}`,
+            item_id: t.item_id,
+            item: t.item_name || 'Equipment',
+            tag: t.asset_code || t.asset_tag || '',
+            category: t.category || 'Equipment',
+            quantity: parseInt(t.quantity, 10) || 1,
+            purpose: t.purpose || 'Official Use'
+          }));
+
+        // Returns: Items currently in borrower custody
+        activeLoanData = allRequests
+          .filter(t => t.status === 'CLAIMED')
+          .map(t => ({
+            id: t.id,
+            ticketNo: `#${t.id}`,
+            borrowerName: t.requester_name || 'Borrower',
+            borrowerId: t.identifier || 'N/A',
+            dept: `${t.role || 'User'} • ${t.department || 'General'}`,
+            item_id: t.item_id,
+            item: t.item_name || 'Equipment',
+            quantity: parseInt(t.quantity, 10) || 1,
+            borrowed_at: t.borrowed_at
+          }));
+
+        renderQueue();
+        renderReturns();
+
+      } catch (err) {
+        console.error('Failed to load live queue:', err);
+        if (queueContainer) {
+          queueContainer.innerHTML = `<div style="text-align: center; color: #f87171; padding: 24px 0; font-size: 0.85rem;">Error syncing with backend.</div>`;
+        }
+      }
+    }
+
+    // RENDER QUEUE
+    function renderQueue() {
+      const container = document.getElementById('queue-list-container');
+      const badge1 = document.getElementById('queue-count');
+      const badge2 = document.getElementById('queue-count-sub');
+
+      if (badge1) badge1.innerText = queueData.length;
+      if (badge2) badge2.innerText = queueData.length;
+
+      if (!container) return;
+
+      if (queueData.length === 0) {
+        container.innerHTML = `
+          <div style="text-align: center; color: #64748b; padding: 36px 0; font-size: 0.85rem;">
+            No requests awaiting pickup.
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = queueData.map(item => `
+        <div class="ticket-card">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+            <div>
+              <div style="font-size:1rem; font-weight:700; color:#fff;">${item.borrowerName}</div>
+              <div style="font-size:0.75rem; color:#94a3b8; margin-top:2px;">${item.dept} (${item.borrowerId})</div>
+            </div>
+            <span style="font-size:0.75rem; background:#1e293b; border:1px solid #334155; padding:2px 8px; border-radius:6px; color:#cbd5e1;">${item.ticketNo}</span>
+          </div>
+          <div style="font-size:0.82rem; margin-bottom:14px; line-height:1.4;">
+            <div>Item: <strong style="color:#fff;">${item.item}</strong> (x${item.quantity})</div>
+            <div style="color:#94a3b8; font-size:0.76rem;">Purpose: ${item.purpose}</div>
+          </div>
+          <div style="display:grid; grid-template-columns:2fr 1fr; gap:8px;">
+            <button type="button" class="btn-dispatch" onclick="processTicket(${item.id})">Process Dispatch &rarr;</button>
+            <button type="button" class="btn-delete" onclick="removeTicket(${item.id})">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // RENDER RETURNS
+    function renderReturns() {
+      const container = document.getElementById('returns-list-container');
+      const badge1 = document.getElementById('returns-count');
+      const badge2 = document.getElementById('returns-count-sub');
+
+      if (badge1) badge1.innerText = activeLoanData.length;
+      if (badge2) badge2.innerText = activeLoanData.length;
+
+      if (!container) return;
+
+      if (activeLoanData.length === 0) {
+        container.innerHTML = `
+          <div style="text-align: center; color: #64748b; padding: 36px 0; font-size: 0.85rem;">
+            No active equipment currently in custody.
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = activeLoanData.map(item => `
+        <div class="ticket-card">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+            <div>
+              <div style="font-size:1rem; font-weight:700; color:#fff;">${item.borrowerName}</div>
+              <div style="font-size:0.75rem; color:#94a3b8; margin-top:2px;">${item.dept} (${item.borrowerId})</div>
+            </div>
+            <span style="font-size:0.75rem; background:#1e3a8a; border:1px solid #3b82f6; padding:2px 8px; border-radius:6px; color:#93c5fd;">${item.ticketNo}</span>
+          </div>
+          <div style="font-size:0.82rem; margin-bottom:14px; line-height:1.4;">
+            <div>Item: <strong style="color:#fff;">${item.item}</strong> (x${item.quantity})</div>
+            <div style="color:#94a3b8; font-size:0.76rem;">Status: In Custody (Claimed)</div>
+          </div>
+          <div>
+            <button type="button" class="btn-return" style="width: 100%;" onclick="startReturnProcess(${item.id})">Process Return &rarr;</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // TAB SWITCHER
+    function switchTab(tab) {
+      const pickupView = document.getElementById('view-queue');
+      const returnsView = document.getElementById('view-returns');
+      const dispatchView = document.getElementById('view-dispatch');
+
+      const pickupTab = document.getElementById('tab-btn-queue');
+      const returnsTab = document.getElementById('tab-btn-returns');
+      const dispatchTab = document.getElementById('tab-btn-dispatch');
+
+      [pickupView, returnsView, dispatchView].forEach(v => { if (v) v.style.display = 'none'; });
+      [pickupTab, returnsTab, dispatchTab].forEach(b => { if (b) b.classList.remove('active'); });
+
+      if (tab === 'queue') {
+        if (pickupView) pickupView.style.display = 'block';
+        if (pickupTab) pickupTab.classList.add('active');
+      } else if (tab === 'returns') {
+        if (returnsView) returnsView.style.display = 'block';
+        if (returnsTab) returnsTab.classList.add('active');
+      } else {
+        if (dispatchView) dispatchView.style.display = 'block';
+        if (dispatchTab) dispatchTab.classList.add('active');
+      }
+    }
+    window.switchCustodianTab = switchTab;
+
+    // FETCH LIVE STOCK FROM CATALOG
+    async function fetchLiveItemStock(tag, itemName, itemId) {
+      const stockDisplay = document.getElementById('display-stock');
+      const statusBadge = document.getElementById('display-status');
+      const tagBadge = document.getElementById('display-tag');
+      const inputTag = document.getElementById('input-tag');
+
+      stockDisplay.innerText = 'Syncing...';
+
+      try {
+        const res = await fetch(`${BACKEND}/api/public/inventory`);
+        if (res.ok) {
+          const catalog = await res.json();
+          
+          const searchTag = (tag || '').trim().toLowerCase();
+          const cleanItemName = (itemName || '').trim().toLowerCase();
+
+          const matchedItem = catalog.find(item => {
+            if (itemId && item.id === itemId) return true;
+            const dbName = (item.name || '').trim().toLowerCase();
+            const dbCode = (item.asset_code || item.asset_tag || '').trim().toLowerCase();
+
+            const matchesTag = searchTag && (dbCode === searchTag);
+            const matchesName = cleanItemName && (dbName === cleanItemName || dbName.includes(cleanItemName) || cleanItemName.includes(dbName));
+
+            return matchesTag || matchesName;
+          });
+
+          if (matchedItem) {
+            const liveStock = parseInt(matchedItem.quantity, 10) || 0;
+            stockDisplay.innerText = liveStock;
+
+            const resolvedTag = matchedItem.asset_code || matchedItem.asset_tag || tag || 'TAG-N/A';
+            if (tagBadge) tagBadge.innerText = resolvedTag;
+            if (inputTag && !inputTag.value) inputTag.value = resolvedTag;
+
+            if (liveStock <= 0) {
+              statusBadge.innerText = 'Out of Stock';
+              statusBadge.style.background = '#ef4444';
+              statusBadge.style.color = '#fff';
+            } else {
+              statusBadge.innerText = 'Available';
+              statusBadge.style.background = '#10b981';
+              statusBadge.style.color = '#022c22';
+            }
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Live catalog fetch error:', e);
+      }
+
+      stockDisplay.innerText = '0';
+      statusBadge.innerText = 'Unavailable';
+      statusBadge.style.background = '#64748b';
+      statusBadge.style.color = '#fff';
+    }
+
+    // PROCESS DISPATCH
+    async function processTicket(id) {
+      const ticket = queueData.find(t => t.id === id);
+      if (!ticket) return;
+
+      currentActiveTicket = ticket;
+
+      const banner = document.getElementById('ticket-indicator');
+      const bannerTicket = document.getElementById('ticket-number-label');
+      if (banner) banner.style.display = 'block';
+      if (bannerTicket) bannerTicket.innerText = ticket.ticketNo;
+
+      const inputTag = document.getElementById('input-tag');
+      if (inputTag) inputTag.value = ticket.tag || '';
+
+      const displayName = document.getElementById('display-name');
+      if (displayName) displayName.innerText = ticket.item;
+
+      const displayTag = document.getElementById('display-tag');
+      if (displayTag) displayTag.innerText = ticket.tag || '...';
+
+      const displayCat = document.getElementById('display-cat');
+      if (displayCat) displayCat.innerText = ticket.category;
+
+      const borrowerField = document.getElementById('input-borrower');
+      if (borrowerField) {
+        borrowerField.value = `${ticket.borrowerName} (${ticket.borrowerId})`.trim();
+      }
+
+      const qtyField = document.getElementById('input-qty');
+      if (qtyField) {
+        qtyField.value = ticket.quantity || 1;
+      }
+
+      const verifiedCard = document.getElementById('verified-card');
+      if (verifiedCard) verifiedCard.style.display = 'block';
+
+      switchTab('dispatch');
+      fetchLiveItemStock(ticket.tag, ticket.item, ticket.item_id);
+    }
+
+    // START RETURN
+    function startReturnProcess(id) {
+      const ticket = activeLoanData.find(t => t.id === id);
+      if (!ticket) return;
+
+      currentReturnTicket = ticket;
+
+      document.getElementById('return-item-title').innerText = `${ticket.item} (x${ticket.quantity})`;
+      document.getElementById('return-borrower-label').innerText = `${ticket.borrowerName} (${ticket.borrowerId})`;
+      document.getElementById('return-remarks-input').value = 'Inspected and returned in good condition';
+      document.getElementById('returns-modal-card').style.display = 'block';
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function cancelReturnMode() {
+      currentReturnTicket = null;
+      document.getElementById('returns-modal-card').style.display = 'none';
+    }
+
+    // EXECUTE RETURN (RESTORES CATALOG STOCK)
+    async function handleExecuteReturn() {
+      if (!currentReturnTicket) return;
+
+      const condition = document.getElementById('return-condition-select').value;
+      const remarks = document.getElementById('return-remarks-input').value.trim();
+      const ticketId = currentReturnTicket.id;
+
+      const confirmBtn = document.querySelector('.btn-confirm-return');
+      if (confirmBtn) confirmBtn.disabled = true;
+
+      try {
+        const response = await fetch(`${BACKEND}/api/admin/requests/${ticketId}/return`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            item_condition: condition,
+            admin_remarks: remarks
+          })
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to process return');
+
+        alert(`✓ Return Complete!\n\nStatus: RETURNED\nCondition: ${condition}\n${data.restored_stock !== null ? `Stock Restored: Available now is ${data.restored_stock}` : 'Stock was not restored due to damage/loss.'}`);
+
+        cancelReturnMode();
+        getAllRequestsData();
+
+      } catch (err) {
+        alert(`Return Error: ${err.message}`);
+      } finally {
+        if (confirmBtn) confirmBtn.disabled = false;
+      }
+    }
+
+    // VERIFY TAG BARCODE MANUALLY
+    async function handleVerify() {
+      const tag = document.getElementById('input-tag').value.trim();
+      if (!tag) {
+        alert('Please enter or scan an asset tag.');
+        return;
+      }
+
+      document.getElementById('display-tag').innerText = tag;
+      document.getElementById('verified-card').style.display = 'block';
+      fetchLiveItemStock(tag, null, null);
+    }
+
+    // PERMANENT DELETION
+    async function removeTicket(id) {
+      if (!confirm(`Are you sure you want to permanently delete Ticket #${id}? This will remove it from both the Custodian list and the mobile app.`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`${BACKEND}/api/admin/requests/${id}`, {
+          method: 'DELETE'
+        });
+
+        const contentType = res.headers.get('content-type') || '';
+        let data = {};
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        }
+
+        if (!res.ok) {
+          throw new Error(data.error || `Server status ${res.status}`);
+        }
+
+        alert(`✓ Ticket #${id} successfully deleted.`);
+        getAllRequestsData();
+
+      } catch (err) {
+        alert(`Failed to delete: ${err.message}`);
+      }
+    }
+
+    // CONFIRM RELEASE & FORCE STOCK DEDUCTION
+    async function handleConfirmRelease() {
+      const inputQty = document.getElementById('input-qty');
+      const inputBorrower = document.getElementById('input-borrower');
+      const displayName = document.getElementById('display-name');
+      const inputTag = document.getElementById('input-tag');
+
+      const qty = parseInt(inputQty ? inputQty.value : '1', 10);
+      const borrower = inputBorrower ? inputBorrower.value.trim() : (currentActiveTicket ? currentActiveTicket.borrowerName : 'Borrower');
+      const item = displayName ? displayName.innerText.trim() : 'Item';
+      const assetTag = inputTag ? inputTag.value.trim() : '';
+      const ticketId = currentActiveTicket ? currentActiveTicket.id : null;
+      const itemId = currentActiveTicket ? currentActiveTicket.item_id : null;
+
+      if (!borrower || isNaN(qty) || qty <= 0) {
+        alert('Please provide valid borrower and quantity details.');
+        return;
+      }
+
+      const confirmBtn = document.querySelector('.btn-confirm-release');
+      if (confirmBtn) confirmBtn.disabled = true;
+
+      try {
+        const response = await fetch(`${BACKEND}/api/admin/inventory/deduct`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            asset_tag: assetTag,
+            asset_code: assetTag,
+            item_name: item,
+            item_id: itemId,
+            quantity: qty,
+            ticket_id: ticketId,
+            borrower_name: borrower
+          })
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        let data = {};
+
+        if (contentType.includes('application/json')) {
+          data = await response.json();
+        } else {
+          const rawText = await response.text();
+          throw new Error(`Server returned HTTP ${response.status}.`);
+        }
+
+        if (!response.ok) {
+          throw new Error(data.error || `Server error (${response.status})`);
+        }
+
+        alert(`✓ Release Confirmed!\nDispatched ${qty} unit(s) of ${item} to ${borrower}.\n\nNew Catalog Stock: ${data.remaining_stock}`);
+
+        currentActiveTicket = null;
+        document.getElementById('verified-card').style.display = 'none';
+        const banner = document.getElementById('ticket-indicator');
+        if (banner) banner.style.display = 'none';
+
+        if (inputTag) inputTag.value = '';
+        if (inputBorrower) inputBorrower.value = '';
+        if (inputQty) inputQty.value = '1';
+
+        getAllRequestsData();
+        switchTab('queue');
+
+      } catch (err) {
+        alert(`Deduction Notice: ${err.message}`);
+      } finally {
+        if (confirmBtn) confirmBtn.disabled = false;
+      }
+    }
+
+    // AUTO-LOAD
+    window.addEventListener('DOMContentLoaded', () => {
+      getAllRequestsData();
+    });
+  </script>
+</body>
+</html>

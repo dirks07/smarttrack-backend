@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CDM SmartTrack - Audit & Inventory Records</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    /* ==========================================================================
+       CDM SmartTrack Audit Portal — Luminous Glassmorphic Theme
+       ========================================================================== */
+    :root {
+      --bg: #060913;
+      --card-bg: rgba(15, 23, 42, 0.75);
+      --card-bg-hover: rgba(30, 41, 59, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-highlight: rgba(16, 185, 129, 0.35);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-green: #10b981;
+      --accent-green-dark: #059669;
+      --accent-green-glow: rgba(16, 185, 129, 0.35);
+      --accent-blue: #38bdf8;
+      --accent-blue-glow: rgba(56, 189, 248, 0.3);
+      --accent-red: #ef4444;
+      --accent-yellow: #f59e0b;
+      --accent-purple: #818cf8;
+      --glass-blur: blur(16px);
+      --transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * { 
+      box-sizing: border-box; 
+      margin: 0; 
+      padding: 0; 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
+    }
+
+    body { 
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.1) 0px, transparent 45%),
+        radial-gradient(at 100% 100%, rgba(56, 189, 248, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 50%, rgba(15, 23, 42, 0.6) 0px, transparent 100%);
+      background-attachment: fixed;
+      color: var(--text-main); 
+      min-height: 100vh; 
+      padding: 32px 24px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; }
+
+    /* Top Header Bar */
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--card-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      padding: 24px 32px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
+      margin-bottom: 28px;
+    }
+
+    .header-title h1 { 
+      font-size: 24px; 
+      font-weight: 800; 
+      letter-spacing: -0.3px;
+      background: linear-gradient(90deg, #ffffff 40%, var(--accent-green) 100%);
+      -webkit-background-clip: text;
+       background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-title p { 
+      font-size: 13px; 
+      color: var(--text-muted); 
+      margin-top: 4px; 
+    }
+
+    .btn-group { display: flex; gap: 12px; }
+
+    .btn {
+      padding: 11px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: var(--transition);
+    }
+
+    .btn:hover { 
+      transform: translateY(-2px);
+    }
+
+    .btn-pdf { 
+      background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); 
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(239, 68, 68, 0.35);
+    }
+
+    .btn-pdf:hover {
+      box-shadow: 0 6px 20px rgba(239, 68, 68, 0.55);
+      filter: brightness(1.1);
+    }
+
+    .btn-refresh { 
+      background: rgba(30, 41, 59, 0.6); 
+      border: 1px solid var(--border); 
+      color: var(--text-main); 
+      backdrop-filter: blur(8px);
+    }
+
+    .btn-refresh:hover { 
+      border-color: var(--accent-blue);
+      color: #fff;
+      box-shadow: 0 0 14px var(--accent-blue-glow);
+    }
+
+    /* Section Cards */
+    .section-card {
+      background: var(--card-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      padding: 26px 28px;
+      margin-bottom: 28px;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      transition: var(--transition);
+    }
+
+    .section-card:hover {
+      border-color: rgba(255, 255, 255, 0.14);
+      box-shadow: 0 14px 40px -10px rgba(0, 0, 0, 0.65);
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 14px;
+    }
+
+    .section-title { 
+      font-size: 18px; 
+      font-weight: 800; 
+      color: #fff; 
+      display: flex; 
+      align-items: center; 
+      gap: 10px; 
+      letter-spacing: -0.2px;
+    }
+
+    .count-badge { 
+      background: rgba(16, 185, 129, 0.12); 
+      color: var(--accent-green); 
+      border: 1px solid var(--border-highlight);
+      padding: 5px 14px; 
+      border-radius: 9999px; 
+      font-size: 11px; 
+      font-weight: 800; 
+      letter-spacing: 0.5px;
+      box-shadow: 0 0 12px var(--accent-green-glow);
+    }
+
+    /* Tables */
+    .table-responsive { 
+      width: 100%; 
+      overflow-x: auto; 
+      border-radius: 12px;
+    }
+
+    .table-responsive::-webkit-scrollbar { height: 6px; }
+    .table-responsive::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+
+    table { 
+      width: 100%; 
+      border-collapse: separate; 
+      border-spacing: 0; 
+      text-align: left; 
+      font-size: 13px; 
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.8);
+      color: var(--text-dim);
+      padding: 14px 18px;
+      font-weight: 800;
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      font-size: 10.5px;
+    }
+
+    td { 
+      padding: 15px 18px; 
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05); 
+      color: #cbd5e1; 
+      vertical-align: middle; 
+      transition: background 0.15s ease;
+    }
+
+    tbody tr:hover td { 
+      background: rgba(255, 255, 255, 0.025); 
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    tfoot td { 
+      background: rgba(11, 15, 25, 0.8); 
+      font-weight: 800; 
+      color: #ffffff; 
+      border-top: 2px solid var(--border); 
+      font-size: 13px;
+    }
+
+    /* Glowing Live Badges */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px;
+      border-radius: 9999px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .status-badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .status-RETURNED { 
+      background: rgba(129, 140, 248, 0.12); 
+      color: #a5b4fc; 
+      border: 1px solid rgba(129, 140, 248, 0.35); 
+    }
+    .status-RETURNED::before { background: #818cf8; box-shadow: 0 0 6px #818cf8; }
+
+    .status-CLAIMED { 
+      background: rgba(56, 189, 248, 0.12); 
+      color: #7dd3fc; 
+      border: 1px solid rgba(56, 189, 248, 0.35); 
+    }
+    .status-CLAIMED::before { background: #38bdf8; box-shadow: 0 0 6px #38bdf8; }
+
+    .status-APPROVED { 
+      background: rgba(16, 185, 129, 0.12); 
+      color: #6ee7b7; 
+      border: 1px solid rgba(16, 185, 129, 0.35); 
+    }
+    .status-APPROVED::before { background: #10b981; box-shadow: 0 0 6px #10b981; }
+
+    .status-PENDING { 
+      background: rgba(245, 158, 11, 0.12); 
+      color: #fde047; 
+      border: 1px solid rgba(245, 158, 11, 0.35); 
+    }
+    .status-PENDING::before { background: #fde047; box-shadow: 0 0 6px #fde047; }
+
+    .status-REJECTED { 
+      background: rgba(239, 68, 68, 0.12); 
+      color: #fca5a5; 
+      border: 1px solid rgba(239, 68, 68, 0.35); 
+    }
+    .status-REJECTED::before { background: #ef4444; }
+
+    /* Links & Code Badges */
+    .email-link { 
+      color: var(--accent-blue); 
+      text-decoration: none; 
+      font-weight: 600; 
+      display: inline-flex; 
+      align-items: center; 
+      gap: 6px; 
+      transition: var(--transition);
+    }
+
+    .email-link:hover { 
+      text-decoration: underline; 
+      color: #bae6fd; 
+    }
+
+    .tag-code { 
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; 
+      background: rgba(11, 15, 25, 0.9); 
+      padding: 4px 8px; 
+      border-radius: 6px; 
+      color: #a5b4fc; 
+      border: 1px solid rgba(129, 140, 248, 0.25); 
+      font-size: 11.5px;
+    }
+
+    .empty-row { 
+      text-align: center; 
+      color: var(--text-dim); 
+      padding: 44px !important; 
+      font-size: 13px;
+    }
+
+    .loader { 
+      display: inline-block; 
+      width: 14px; 
+      height: 14px; 
+      border: 2px solid var(--accent-green); 
+      border-radius: 50%; 
+      border-top-color: transparent; 
+      animation: spin 0.8s linear infinite; 
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 768px) {
+      body { padding: 16px 12px; }
+      .header-bar { flex-direction: column; gap: 16px; align-items: flex-start; padding: 20px; }
+      .btn-group { width: 100%; }
+      .btn { flex: 1; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Top Header -->
+    <header class="header-bar">
+      <div class="header-title">
+        <h1>CDM SmartTrack — Audit Records</h1>
+        <p>Real-time equipment catalog totals and borrower requisition history.</p>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-refresh" onclick="loadAllRecords()">↻ Refresh Data</button>
+        <button class="btn btn-pdf" onclick="generateVectorPDF()">📄 Download PDF Audit Report</button>
+      </div>
+    </header>
+
+    <!-- TABLE 1: Inventory Stock & Quantities Summary -->
+    <section class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          📦 Equipment Catalog & Stock Totals
+        </div>
+        <span class="count-badge" id="inventoryCountBadge">Loading...</span>
+      </div>
+      <div class="table-responsive">
+        <table id="inventoryTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Asset Code</th>
+              <th>Item Name</th>
+              <th>Category</th>
+              <th style="text-align: right;">Total Stock</th>
+              <th style="text-align: right;">Available Stock</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="inventoryBody">
+            <tr><td colspan="7" class="empty-row"><span class="loader"></span> Loading inventory catalog...</td></tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4" style="text-align: right;">Grand Total Equipment Items:</td>
+              <td id="grandTotalQty" style="text-align: right;">0</td>
+              <td id="grandTotalAvailable" style="text-align: right;">0</td>
+              <td>—</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- TABLE 2: Requisition Transaction Log with Borrower Gmail -->
+    <section class="section-card">
+      <div class="section-header">
+        <div class="section-title">
+          📋 Borrower Requisition & Activity Logs
+        </div>
+        <span class="count-badge" id="requestsCountBadge">Loading...</span>
+      </div>
+      <div class="table-responsive">
+        <table id="requestsTable">
+          <thead>
+            <tr>
+              <th>Ticket #</th>
+              <th>Borrower Name</th>
+              <th>Borrower ID</th>
+              <th>Borrower Gmail</th>
+              <th>Department / Role</th>
+              <th>Item Requested</th>
+              <th style="text-align: center;">Qty</th>
+              <th>Status</th>
+              <th>Date Requested</th>
+              <th>Audit Remarks / Condition</th>
+            </tr>
+          </thead>
+          <tbody id="requestsBody">
+            <tr><td colspan="10" class="empty-row"><span class="loader"></span> Loading requisition logs...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const BACKEND_URL = 'https://smarttrack-backend-v6l4.onrender.com';
+
+    let inventoryData = [];
+    let requestsData = [];
+    let borrowersMap = new Map();
+
+    async function loadAllRecords() {
+      try {
+        // 1. Fetch Borrower Directory for Gmail lookups
+        try {
+          const borrowersRes = await fetch(`${BACKEND_URL}/api/admin/borrowers`);
+          if (borrowersRes.ok) {
+            const borrowersList = await borrowersRes.json();
+            borrowersMap.clear();
+            borrowersList.forEach(b => {
+              if (b.identifier) {
+                borrowersMap.set(b.identifier.trim().toUpperCase(), b.email);
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('Could not fetch borrower directory:', e);
+        }
+
+        // 2. Fetch Live Inventory Catalog
+        const invRes = await fetch(`${BACKEND_URL}/api/public/inventory`);
+        inventoryData = await invRes.json();
+        renderInventoryTable(inventoryData);
+
+        // 3. Fetch All Requisitions History
+        const reqRes = await fetch(`${BACKEND_URL}/api/admin/all-requests`);
+        requestsData = await reqRes.json();
+        renderRequestsTable(requestsData);
+
+      } catch (err) {
+        console.error('Data load error:', err);
+        alert('Failed to connect to backend server. Please verify your Render service is online.');
+      }
+    }
+
+    // Render Table 1: Inventory Stock
+    function renderInventoryTable(items) {
+      const tbody = document.getElementById('inventoryBody');
+      const badge = document.getElementById('inventoryCountBadge');
+      const grandTotalCell = document.getElementById('grandTotalQty');
+      const grandAvailCell = document.getElementById('grandTotalAvailable');
+
+      if (!items || items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-row">No equipment catalog records registered.</td></tr>`;
+        badge.innerText = `0 items`;
+        grandTotalCell.innerText = '0';
+        grandAvailCell.innerText = '0';
+        return;
+      }
+
+      badge.innerText = `${items.length} Registered Products`;
+
+      let totalUnits = 0;
+      let totalAvailable = 0;
+
+      let html = '';
+      items.forEach((item, idx) => {
+        const qty = parseInt(item.quantity, 10) || 0;
+        const avail = parseInt(item.available_quantity !== undefined ? item.available_quantity : item.quantity, 10) || 0;
+        totalUnits += qty;
+        totalAvailable += avail;
+
+        const isLow = avail <= 0;
+
+        html += `
+          <tr>
+            <td style="color: var(--text-dim);">${idx + 1}</td>
+            <td><span class="tag-code">${item.asset_code || item.asset_tag || 'N/A'}</span></td>
+            <td style="font-weight: 700; color: #fff;">${item.name}</td>
+            <td>${item.category || 'Equipment'}</td>
+            <td style="text-align: right; font-weight: 700;">${qty}</td>
+            <td style="text-align: right; font-weight: 700; color: ${isLow ? 'var(--accent-red)' : 'var(--accent-green)'};">${avail}</td>
+            <td>
+              <span class="status-badge ${isLow ? 'status-REJECTED' : 'status-APPROVED'}">
+                ${isLow ? 'OUT OF STOCK' : 'IN STOCK'}
+              </span>
+            </td>
+          </tr>
+        `;
+      });
+
+      tbody.innerHTML = html;
+      grandTotalCell.innerText = totalUnits;
+      grandAvailCell.innerText = totalAvailable;
+    }
+
+    // Render Table 2: Requisitions with Gmail Matching
+    function renderRequestsTable(requests) {
+      const tbody = document.getElementById('requestsBody');
+      const badge = document.getElementById('requestsCountBadge');
+
+      if (!requests || requests.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" class="empty-row">No requisitions recorded in the database.</td></tr>`;
+        badge.innerText = `0 tickets`;
+        return;
+      }
+
+      badge.innerText = `${requests.length} Total Logs`;
+
+      let html = '';
+      requests.forEach((req) => {
+        const status = (req.status || 'PENDING').toString().trim().toUpperCase();
+        
+        // Match Gmail by borrower identifier
+        const lookupId = (req.identifier || '').toString().trim().toUpperCase();
+        const borrowerEmail = req.email || borrowersMap.get(lookupId) || 'Not recorded';
+
+        const emailDisplay = borrowerEmail.includes('@')
+          ? `<a href="mailto:${borrowerEmail}" class="email-link">✉ ${borrowerEmail}</a>`
+          : `<span style="color: var(--text-dim); font-style: italic;">${borrowerEmail}</span>`;
+
+        let auditRemarks = '—';
+        if (status === 'RETURNED') {
+          auditRemarks = `Audit: ${req.item_condition || 'Good'}` + (req.admin_remarks ? ` (${req.admin_remarks})` : '');
+        } else if (status === 'REJECTED') {
+          auditRemarks = 'Request declined';
+        } else if (status === 'CLAIMED') {
+          auditRemarks = 'Currently with borrower';
+        }
+
+        html += `
+          <tr>
+            <td style="font-weight: 800; color: var(--accent-purple);">#${req.id}</td>
+            <td style="font-weight: 700; color: #fff;">${req.requester_name || 'N/A'}</td>
+            <td><span class="tag-code">${req.identifier || 'N/A'}</span></td>
+            <td>${emailDisplay}</td>
+            <td>${req.department || 'BSIT'} / ${req.role || 'Student'}</td>
+            <td style="color: #fff; font-weight: 600;">${req.item_name}</td>
+            <td style="text-align: center; font-weight: 700;">${req.quantity || 1}</td>
+            <td><span class="status-badge status-${status}">${status}</span></td>
+            <td style="color: var(--text-muted);">${req.created_at ? new Date(req.created_at).toLocaleDateString() : 'N/A'}</td>
+            <td style="font-size: 12px; color: var(--text-muted);">${auditRemarks}</td>
+          </tr>
+        `;
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    // Vector PDF Generation (Both Tables)
+    function generateVectorPDF() {
+      if (!window.jspdf || !window.jspdf.jsPDF) {
+        alert('PDF generator library is still loading. Please try again in a few seconds.');
+        return;
+      }
+
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+
+      // Report Header
+      doc.setFontSize(18);
+      doc.setTextColor(15, 23, 42);
+      doc.text("COLEGIO DE MONTALBAN — SMARTTRACK AUDIT REPORT", 40, 40);
+
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Generated on: ${new Date().toLocaleString()} | Cloud Inventory & Equipment Log`, 40, 56);
+
+      // Section 1: Equipment Catalog
+      doc.setFontSize(13);
+      doc.setTextColor(30, 41, 59);
+      doc.text("1. Equipment Catalog & Stock Totals", 40, 80);
+
+      let totalCatalogUnits = 0;
+      let totalCatalogAvail = 0;
+      const invBodyRows = inventoryData.map((item, index) => {
+        const qty = parseInt(item.quantity, 10) || 0;
+        const avail = parseInt(item.available_quantity !== undefined ? item.available_quantity : item.quantity, 10) || 0;
+        totalCatalogUnits += qty;
+        totalCatalogAvail += avail;
+        return [
+          index + 1,
+          item.asset_code || item.asset_tag || 'N/A',
+          item.name || 'N/A',
+          item.category || 'Equipment',
+          qty,
+          avail,
+          avail <= 0 ? 'OUT OF STOCK' : 'IN STOCK'
+        ];
+      });
+
+      doc.autoTable({
+        startY: 90,
+        head: [['#', 'Asset Tag', 'Product Name', 'Category', 'Total Qty', 'Avail Qty', 'Status']],
+        body: invBodyRows,
+        foot: [['', '', 'Grand Totals:', '', totalCatalogUnits, totalCatalogAvail, '']],
+        theme: 'striped',
+        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 4 },
+        margin: { left: 40, right: 40 }
+      });
+
+      // Section 2: Requisitions & Borrower Log with Gmail
+      const nextY = doc.lastAutoTable.finalY + 30;
+      doc.setFontSize(13);
+      doc.setTextColor(30, 41, 59);
+      doc.text("2. Borrower Requisition & Transaction History", 40, nextY);
+
+      const reqBodyRows = requestsData.map((req) => {
+        const lookupId = (req.identifier || '').toString().trim().toUpperCase();
+        const borrowerEmail = req.email || borrowersMap.get(lookupId) || 'Not recorded';
+        const status = (req.status || 'PENDING').toString().trim().toUpperCase();
+
+        return [
+          `#${req.id}`,
+          req.requester_name || 'N/A',
+          req.identifier || 'N/A',
+          borrowerEmail,
+          req.department || 'BSIT',
+          req.item_name || 'N/A',
+          req.quantity || 1,
+          status,
+          req.created_at ? new Date(req.created_at).toLocaleDateString() : 'N/A',
+          req.item_condition || '—'
+        ];
+      });
+
+      doc.autoTable({
+        startY: nextY + 10,
+        head: [['Ticket', 'Borrower', 'ID Number', 'Gmail Address', 'Dept', 'Item', 'Qty', 'Status', 'Date', 'Condition']],
+        body: reqBodyRows,
+        theme: 'striped',
+        headStyles: { fillColor: [16, 185, 129], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 4 },
+        margin: { left: 40, right: 40 }
+      });
+
+      // Save PDF file directly
+      doc.save(`CDM_SmartTrack_Audit_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+    }
+
+    // Auto load records on open
+    window.addEventListener('DOMContentLoaded', loadAllRecords);
+  </script>
+</body>
+</html>
