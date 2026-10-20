@@ -11,8 +11,9 @@ import {
   Alert,
   ActivityIndicator,
   StatusBar,
+  SafeAreaView,
+  Platform,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 const API_BASE_URL = 'https://smarttrack-backend-v614.onrender.com';
 
@@ -54,7 +55,7 @@ export default function App() {
     }
   }, [user]);
 
-  // SAFE REQUEST HELPER: Prevents "JSON Parse error: Unexpected character: N"
+  // SAFE REQUEST HELPER: Handles cold starts and non-JSON responses cleanly
   const safeFetch = async (url, options = {}) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for cold Render starts
@@ -215,351 +216,348 @@ export default function App() {
   // ----------------- AUTH SCREENS -----------------
   if (!user) {
     return (
-      <SafeAreaProvider>
-        <SafeAreaView style={styles.container}>
-          <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
-          <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
-            <View style={styles.brandHeader}>
-              <Text style={styles.brandTitle}>CDM SMARTTRACK</Text>
-              <Text style={styles.brandSubtitle}>Colegio de Montalban</Text>
-            </View>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
+        <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
+          <View style={styles.brandHeader}>
+            <Text style={styles.brandTitle}>CDM SMARTTRACK</Text>
+            <Text style={styles.brandSubtitle}>Colegio de Montalban</Text>
+          </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>
-                {isRegisterMode ? 'Borrower Registration' : 'Borrower Sign In'}
-              </Text>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>
+              {isRegisterMode ? 'Borrower Registration' : 'Borrower Sign In'}
+            </Text>
 
-              {isRegisterMode ? (
-                <>
-                  <Text style={styles.inputLabel}>Full Name</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Mae Morales"
-                    placeholderTextColor="#484F58"
-                    value={regName}
-                    onChangeText={setRegName}
-                  />
+            {isRegisterMode ? (
+              <>
+                <Text style={styles.inputLabel}>Full Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Mae Morales"
+                  placeholderTextColor="#484F58"
+                  value={regName}
+                  onChangeText={setRegName}
+                />
 
-                  <Text style={styles.inputLabel}>Student / Faculty ID</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="2022-00123"
-                    placeholderTextColor="#484F58"
-                    value={regId}
-                    onChangeText={setRegId}
-                    autoCapitalize="characters"
-                  />
+                <Text style={styles.inputLabel}>Student / Faculty ID</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="2022-00123"
+                  placeholderTextColor="#484F58"
+                  value={regId}
+                  onChangeText={setRegId}
+                  autoCapitalize="characters"
+                />
 
-                  <Text style={styles.inputLabel}>Gmail Address</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="student@gmail.com"
-                    placeholderTextColor="#484F58"
-                    value={regEmail}
-                    onChangeText={setRegEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
+                <Text style={styles.inputLabel}>Gmail Address</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="student@gmail.com"
+                  placeholderTextColor="#484F58"
+                  value={regEmail}
+                  onChangeText={setRegEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
 
-                  <Text style={styles.inputLabel}>Department</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="BSIT"
-                    placeholderTextColor="#484F58"
-                    value={regDept}
-                    onChangeText={setRegDept}
-                  />
+                <Text style={styles.inputLabel}>Department</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="BSIT"
+                  placeholderTextColor="#484F58"
+                  value={regDept}
+                  onChangeText={setRegDept}
+                />
 
-                  <Text style={styles.inputLabel}>Password</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="••••••••"
-                    placeholderTextColor="#484F58"
-                    secureTextEntry
-                    value={regPassword}
-                    onChangeText={setRegPassword}
-                  />
+                <Text style={styles.inputLabel}>Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="••••••••"
+                  placeholderTextColor="#484F58"
+                  secureTextEntry
+                  value={regPassword}
+                  onChangeText={setRegPassword}
+                />
 
-                  <TouchableOpacity
-                    style={[styles.primaryButton, loading && styles.buttonDisabled]}
-                    onPress={handleRegister}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <Text style={styles.primaryButtonText}>Send Activation Email</Text>
-                    )}
-                  </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primaryButton, loading && styles.buttonDisabled]}
+                  onPress={handleRegister}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Send Activation Email</Text>
+                  )}
+                </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.switchButton}
-                    onPress={() => setIsRegisterMode(false)}
-                  >
-                    <Text style={styles.switchButtonText}>Already registered? Sign In</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.inputLabel}>Student / Faculty ID</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="2022-00123"
-                    placeholderTextColor="#484F58"
-                    value={loginId}
-                    onChangeText={setLoginId}
-                    autoCapitalize="characters"
-                  />
+                <TouchableOpacity
+                  style={styles.switchButton}
+                  onPress={() => setIsRegisterMode(false)}
+                >
+                  <Text style={styles.switchButtonText}>Already registered? Sign In</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.inputLabel}>Student / Faculty ID</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="2022-00123"
+                  placeholderTextColor="#484F58"
+                  value={loginId}
+                  onChangeText={setLoginId}
+                  autoCapitalize="characters"
+                />
 
-                  <Text style={styles.inputLabel}>Password</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="••••••••"
-                    placeholderTextColor="#484F58"
-                    secureTextEntry
-                    value={loginPassword}
-                    onChangeText={setLoginPassword}
-                  />
+                <Text style={styles.inputLabel}>Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="••••••••"
+                  placeholderTextColor="#484F58"
+                  secureTextEntry
+                  value={loginPassword}
+                  onChangeText={setLoginPassword}
+                />
 
-                  <TouchableOpacity
-                    style={[styles.primaryButton, loading && styles.buttonDisabled]}
-                    onPress={handleLogin}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <Text style={styles.primaryButtonText}>Sign In</Text>
-                    )}
-                  </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primaryButton, loading && styles.buttonDisabled]}
+                  onPress={handleLogin}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Sign In</Text>
+                  )}
+                </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.switchButton}
-                    onPress={() => setIsRegisterMode(true)}
-                  >
-                    <Text style={styles.switchButtonText}>New Borrower? Register with Gmail &rarr;</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
+                <TouchableOpacity
+                  style={styles.switchButton}
+                  onPress={() => setIsRegisterMode(true)}
+                >
+                  <Text style={styles.switchButtonText}>New Borrower? Register with Gmail &rarr;</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
 
-            {/* ACTIVATION CONFIRMATION MODAL */}
-            <Modal
-              visible={showActivationModal}
-              transparent
-              animationType="fade"
-              onRequestClose={() => setShowActivationModal(false)}
-            >
-              <View style={styles.modalOverlay}>
-                <View style={styles.modalCard}>
-                  <Text style={styles.modalIcon}>📬</Text>
-                  <Text style={styles.modalHeader}>Activation Link Sent!</Text>
-                  <Text style={styles.modalMessage}>
-                    We sent an activation link to:
-                  </Text>
-                  <Text style={styles.modalEmail}>{activationEmailSent}</Text>
-                  <Text style={styles.modalSubMessage}>
-                    Please open your Gmail and tap the "Activate My Account" button to complete registration.
-                  </Text>
+          {/* ACTIVATION CONFIRMATION MODAL */}
+          <Modal
+            visible={showActivationModal}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowActivationModal(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalCard}>
+                <Text style={styles.modalIcon}>📬</Text>
+                <Text style={styles.modalHeader}>Activation Link Sent!</Text>
+                <Text style={styles.modalMessage}>
+                  We sent an activation link to:
+                </Text>
+                <Text style={styles.modalEmail}>{activationEmailSent}</Text>
+                <Text style={styles.modalSubMessage}>
+                  Please open your Gmail and tap the "Activate My Account" button to complete registration.
+                </Text>
 
-                  <TouchableOpacity
-                    style={styles.modalButton}
-                    onPress={() => {
-                      setShowActivationModal(false);
-                      setIsRegisterMode(false);
-                    }}
-                  >
-                    <Text style={styles.modalButtonText}>I Understand, Proceed to Sign In</Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  style={styles.modalButton}
+                  onPress={() => {
+                    setShowActivationModal(false);
+                    setIsRegisterMode(false);
+                  }}
+                >
+                  <Text style={styles.modalButtonText}>I Understand, Proceed to Sign In</Text>
+                </TouchableOpacity>
               </View>
-            </Modal>
-          </ScrollView>
-        </SafeAreaView>
-      </SafeAreaProvider>
+            </View>
+          </Modal>
+        </ScrollView>
+      </SafeAreaView>
     );
   }
 
   // ----------------- MAIN APP DASHBOARD -----------------
   return (
-    <SafeAreaProvider>
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
 
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>CDM SMARTTRACK</Text>
-            <Text style={styles.headerSubtitle}>
-              {user.full_name} • {user.identifier}
-            </Text>
-          </View>
-          <TouchableOpacity style={styles.logoutButton} onPress={() => setUser(null)}>
-            <Text style={styles.logoutText}>Sign Out</Text>
-          </TouchableOpacity>
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>CDM SMARTTRACK</Text>
+          <Text style={styles.headerSubtitle}>
+            {user.full_name} • {user.identifier}
+          </Text>
         </View>
+        <TouchableOpacity style={styles.logoutButton} onPress={() => setUser(null)}>
+          <Text style={styles.logoutText}>Sign Out</Text>
+        </TouchableOpacity>
+      </View>
 
-        {/* Tab Navigation */}
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'inventory' && styles.activeTab]}
-            onPress={() => setActiveTab('inventory')}
-          >
-            <Text style={[styles.tabText, activeTab === 'inventory' && styles.activeTabText]}>
-              Available Items
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'tickets' && styles.activeTab]}
-            onPress={() => {
-              setActiveTab('tickets');
-              fetchTickets();
-            }}
-          >
-            <Text style={[styles.tabText, activeTab === 'tickets' && styles.activeTabText]}>
-              My Requests ({tickets.length})
-            </Text>
-          </TouchableOpacity>
-        </View>
+      {/* Tab Navigation */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'inventory' && styles.activeTab]}
+          onPress={() => setActiveTab('inventory')}
+        >
+          <Text style={[styles.tabText, activeTab === 'inventory' && styles.activeTabText]}>
+            Available Items
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'tickets' && styles.activeTab]}
+          onPress={() => {
+            setActiveTab('tickets');
+            fetchTickets();
+          }}
+        >
+          <Text style={[styles.tabText, activeTab === 'tickets' && styles.activeTabText]}>
+            My Requests ({tickets.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-        {/* Inventory Tab */}
-        {activeTab === 'inventory' ? (
-          <View style={styles.flexOne}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryBar}>
-              {categories.map(cat => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[styles.categoryTag, selectedCategory === cat && styles.categoryTagActive]}
-                  onPress={() => setSelectedCategory(cat)}
-                >
-                  <Text style={[styles.categoryText, selectedCategory === cat && styles.categoryTextActive]}>
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+      {/* Inventory Tab */}
+      {activeTab === 'inventory' ? (
+        <View style={styles.flexOne}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryBar}>
+            {categories.map(cat => (
+              <TouchableOpacity
+                key={cat}
+                style={[styles.categoryTag, selectedCategory === cat && styles.categoryTagActive]}
+                onPress={() => setSelectedCategory(cat)}
+              >
+                <Text style={[styles.categoryText, selectedCategory === cat && styles.categoryTextActive]}>
+                  {cat}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
 
-            <FlatList
-              data={filteredInventory}
-              keyExtractor={item => item.id.toString()}
-              contentContainerStyle={styles.listPadding}
-              renderItem={({ item }) => (
-                <View style={styles.itemCard}>
-                  <View style={styles.itemInfo}>
-                    <Text style={styles.itemCode}>{item.asset_code}</Text>
-                    <Text style={styles.itemName}>{item.name}</Text>
-                    <Text style={styles.itemCategory}>{item.category}</Text>
-                  </View>
-                  <View style={styles.itemAction}>
-                    <Text style={styles.itemQty}>{item.quantity} available</Text>
-                    <TouchableOpacity
-                      style={[styles.borrowBtn, item.quantity === 0 && styles.buttonDisabled]}
-                      disabled={item.quantity === 0}
-                      onPress={() => {
-                        setSelectedItem(item);
-                        setBorrowQty('1');
-                        setBorrowPurpose('');
-                        setBorrowModalVisible(true);
-                      }}
-                    >
-                      <Text style={styles.borrowBtnText}>Borrow</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            />
-          </View>
-        ) : (
-          /* Tickets Tab */
           <FlatList
-            data={tickets}
+            data={filteredInventory}
             keyExtractor={item => item.id.toString()}
             contentContainerStyle={styles.listPadding}
             renderItem={({ item }) => (
-              <View style={styles.ticketCard}>
-                <View style={styles.ticketTopRow}>
-                  <Text style={styles.ticketId}>Ticket #{item.id}</Text>
-                  <View
-                    style={[
-                      styles.statusPill,
-                      item.status === 'APPROVED' && styles.statusApproved,
-                      item.status === 'CLAIMED' && styles.statusClaimed,
-                      item.status === 'RETURNED' && styles.statusReturned,
-                    ]}
-                  >
-                    <Text style={styles.statusPillText}>{item.status}</Text>
-                  </View>
+              <View style={styles.itemCard}>
+                <View style={styles.itemInfo}>
+                  <Text style={styles.itemCode}>{item.asset_code}</Text>
+                  <Text style={styles.itemName}>{item.name}</Text>
+                  <Text style={styles.itemCategory}>{item.category}</Text>
                 </View>
-                <Text style={styles.ticketItemName}>
-                  {item.item_name} ({item.quantity} unit)
-                </Text>
-                <Text style={styles.ticketPurpose}>Purpose: {item.purpose}</Text>
-                <Text style={styles.ticketDate}>Date: {item.created_at}</Text>
+                <View style={styles.itemAction}>
+                  <Text style={styles.itemQty}>{item.quantity} available</Text>
+                  <TouchableOpacity
+                    style={[styles.borrowBtn, item.quantity === 0 && styles.buttonDisabled]}
+                    disabled={item.quantity === 0}
+                    onPress={() => {
+                      setSelectedItem(item);
+                      setBorrowQty('1');
+                      setBorrowPurpose('');
+                      setBorrowModalVisible(true);
+                    }}
+                  >
+                    <Text style={styles.borrowBtnText}>Borrow</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
           />
-        )}
-
-        {/* Borrow Modal */}
-        <Modal
-          visible={borrowModalVisible}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setBorrowModalVisible(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalHeader}>Request Item</Text>
-              <Text style={styles.modalSubHeader}>{selectedItem?.name}</Text>
-
-              <Text style={styles.inputLabel}>Quantity</Text>
-              <TextInput
-                style={styles.input}
-                value={borrowQty}
-                onChangeText={setBorrowQty}
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>Purpose of Borrowing</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="e.g. Capstone laboratory testing"
-                placeholderTextColor="#484F58"
-                value={borrowPurpose}
-                onChangeText={setBorrowPurpose}
-                multiline
-              />
-
-              <TouchableOpacity
-                style={[styles.primaryButton, loading && styles.buttonDisabled]}
-                onPress={submitBorrowRequest}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.primaryButtonText}>Submit Borrow Request</Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setBorrowModalVisible(false)}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
+        </View>
+      ) : (
+        /* Tickets Tab */
+        <FlatList
+          data={tickets}
+          keyExtractor={item => item.id.toString()}
+          contentContainerStyle={styles.listPadding}
+          renderItem={({ item }) => (
+            <View style={styles.ticketCard}>
+              <View style={styles.ticketTopRow}>
+                <Text style={styles.ticketId}>Ticket #{item.id}</Text>
+                <View
+                  style={[
+                    styles.statusPill,
+                    item.status === 'APPROVED' && styles.statusApproved,
+                    item.status === 'CLAIMED' && styles.statusClaimed,
+                    item.status === 'RETURNED' && styles.statusReturned,
+                  ]}
+                >
+                  <Text style={styles.statusPillText}>{item.status}</Text>
+                </View>
+              </View>
+              <Text style={styles.ticketItemName}>
+                {item.item_name} ({item.quantity} unit)
+              </Text>
+              <Text style={styles.ticketPurpose}>Purpose: {item.purpose}</Text>
+              <Text style={styles.ticketDate}>Date: {item.created_at}</Text>
             </View>
+          )}
+        />
+      )}
+
+      {/* Borrow Modal */}
+      <Modal
+        visible={borrowModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setBorrowModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalHeader}>Request Item</Text>
+            <Text style={styles.modalSubHeader}>{selectedItem?.name}</Text>
+
+            <Text style={styles.inputLabel}>Quantity</Text>
+            <TextInput
+              style={styles.input}
+              value={borrowQty}
+              onChangeText={setBorrowQty}
+              keyboardType="numeric"
+            />
+
+            <Text style={styles.inputLabel}>Purpose of Borrowing</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              placeholder="e.g. Capstone laboratory testing"
+              placeholderTextColor="#484F58"
+              value={borrowPurpose}
+              onChangeText={setBorrowPurpose}
+              multiline
+            />
+
+            <TouchableOpacity
+              style={[styles.primaryButton, loading && styles.buttonDisabled]}
+              onPress={submitBorrowRequest}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Submit Borrow Request</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setBorrowModalVisible(false)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
-        </Modal>
-      </SafeAreaView>
-    </SafeAreaProvider>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
     backgroundColor: '#0B0F17',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   flexOne: {
     flex: 1,
@@ -820,6 +818,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
+    marginTop: 2,
   },
   itemCategory: {
     color: '#10B981',
