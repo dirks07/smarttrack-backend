@@ -11,7 +11,7 @@ app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'data.json');
 
-// Initialize Resend Client (uses HTTPS Port 443 — never blocked by Render)
+// Initialize Resend Client (uses HTTPS Port 443 - never blocked by Render)
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Initial seed database structure
