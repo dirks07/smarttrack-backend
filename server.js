@@ -1,54 +1,37 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { Resend } = require('resend');
+const brevo = require('@getbrevo/brevo');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'data.json');
+const BASE_URL = process.env.RENDER_BASE_URL || 'https://smarttrack-backend-v614.onrender.com';
+const SENDER_EMAIL = process.env.SENDER_EMAIL || 'dirkshaned@gmail.com';
 
-// Initialize Resend Client (uses HTTPS Port 443 — reliable on Render)
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Brevo Transactional Email Client
+const apiInstance = new brevo.TransactionalEmailsApi();
+if (process.env.BREVO_API_KEY) {
+  apiInstance.setApiKey(
+    brevo.TransactionalEmailsApiApiKeys.apiKey,
+    process.env.BREVO_API_KEY
+  );
+}
 
-// Initial seed database structure
 const initialData = {
-  admins: [
-    { id: 1, full_name: "Lead Custodian", username: "admin", password: "password123" }
-  ],
-  requesters: [
-    { 
-      id: 1, 
-      full_name: "Sample Student", 
-      email: "aaronjustine242@gmail.com", 
-      identifier: "2023-0001", 
-      role: "Student", 
-      department: "Institute of Computing Studies", 
-      password: "password123",
-      is_active: true,
-      activation_code: null
-    },
-    { 
-      id: 2, 
-      full_name: "Prof. Juan Dela Cruz", 
-      email: "teacher@cdm.edu.ph", 
-      identifier: "FAC-901", 
-      role: "Teacher", 
-      department: "Institute of Computing Studies", 
-      password: "password123",
-      is_active: true,
-      activation_code: null
-    }
-  ],
+  admins: [{ id: 1, full_name: "Lead Custodian", username: "admin", password: "password123" }],
+  requesters: [],
   inventory: [
-    { id: 1, name: "Epson Projector EB-X06", category: "Equipment", quantity: 5, status: "Available", asset_code: "CDM-EQ-001" },
-    { id: 2, name: "A4 Copy Paper (Box)", category: "Consumable", quantity: 42, status: "In Stock", asset_code: "CDM-CS-101" },
-    { id: 3, name: "Whiteboard Marker Black", category: "Consumable", quantity: 120, status: "In Stock", asset_code: "CDM-CS-102" },
-    { id: 4, name: "Soldering Iron Kit", category: "Laboratory Tool", quantity: 15, status: "Available", asset_code: "CDM-LB-045" },
-    { id: 5, name: "HDMI Cable 5m", category: "Peripheral", quantity: 8, status: "Available", asset_code: "CDM-PR-022" }
+    { id: 1, name: "Epson Projector EB-X06", category: "Equipment", quantity: 17, status: "Available", asset_code: "CDM-EQ-001" },
+    { id: 2, name: "Soldering Iron Kit", category: "Laboratory", quantity: 13, status: "Available", asset_code: "CDM-LB-045" },
+    { id: 3, name: "HDMI Cable 5m", category: "Audio/Visual", quantity: 7, status: "Available", asset_code: "CDM-PR-022" },
+    { id: 4, name: "Digital Multimeter Fluke 101", category: "Laboratory", quantity: 8, status: "Available", asset_code: "DMM-004" },
+    { id: 5, name: "Presentation Clicker", category: "Audio/Visual", quantity: 1, status: "Available", asset_code: "CDM-ER-012" }
   ],
   requests: [],
   borrow_logs: []
@@ -76,170 +59,157 @@ function saveDb(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// ----------------- HEALTH CHECK ROUTE -----------------
+// ----------------- ROOT HEALTH CHECK -----------------
 app.get('/', (req, res) => {
   res.json({ message: "SmartTrack Core API running smoothly." });
 });
 
-// ----------------- FULL DATABASE ROUTE -----------------
-app.get('/api/admin/database', (req, res) => {
-  const db = loadDb();
-  res.json(db);
-});
-
-// ----------------- ADMIN AUTH ROUTES -----------------
-app.post('/api/admin/signup', (req, res) => {
-  const { full_name, username, password } = req.body;
-  if (!full_name || !username || !password) {
-    return res.status(400).json({ error: "All fields are required" });
-  }
-
-  const db = loadDb();
-  if (db.admins.find(a => a.username.toLowerCase() === username.toLowerCase())) {
-    return res.status(409).json({ error: "Username already registered" });
-  }
-
-  const newAdmin = { id: db.admins.length + 1, full_name, username, password };
-  db.admins.push(newAdmin);
-  saveDb(db);
-  res.json({ success: true, admin: { full_name, username } });
-});
-
-app.post('/api/admin/login', (req, res) => {
-  const { username, password } = req.body;
-  const db = loadDb();
-  const admin = db.admins.find(a => a.username.toLowerCase() === username.toLowerCase() && a.password === password);
-  if (!admin) return res.status(401).json({ error: "Invalid username or password" });
-
-  res.json({ success: true, admin: { full_name: admin.full_name, username: admin.username } });
-});
-
-// ----------------- BORROWER REGISTRATION WITH EMAIL ACTIVATION -----------------
-app.post(['/api/public/signup', '/api/borrower/register', '/api/borrowers/register'], async (req, res) => {
-  const { full_name, identifier, email, role, department, password } = req.body;
+// ----------------- BORROWER REGISTRATION -----------------
+app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/signup'], async (req, res) => {
+  const { full_name, identifier, email, department, password } = req.body;
   if (!full_name || !identifier || !password || !email) {
-    return res.status(400).json({ error: "All registration fields including email are required." });
+    return res.status(400).json({ error: "All registration fields are required." });
   }
 
   const cleanEmail = email.trim().toLowerCase();
   const cleanId = identifier.trim().toLowerCase();
   const db = loadDb();
 
-  const idExists = db.requesters.find(u => u.identifier.toLowerCase() === cleanId);
-  if (idExists) {
-    return res.status(409).json({ error: `${role === 'Student' ? 'Student Number' : 'Faculty ID'} is already registered.` });
+  if (db.requesters.find(u => (u.identifier || '').toLowerCase() === cleanId)) {
+    return res.status(409).json({ error: "Student / Faculty ID is already registered." });
+  }
+  if (db.requesters.find(u => (u.email || '').toLowerCase() === cleanEmail)) {
+    return res.status(409).json({ error: "Gmail address is already registered." });
   }
 
-  const emailExists = db.requesters.find(u => (u.email || '').toLowerCase() === cleanEmail);
-  if (emailExists) {
-    return res.status(409).json({ error: "This Gmail address is already registered." });
-  }
-
-  // 6-digit numerical activation code
-  const activationCode = Math.floor(100000 + Math.random() * 900000).toString();
-
+  const activationToken = crypto.randomBytes(24).toString('hex');
   const newRequester = {
     id: db.requesters.length + 1,
     full_name: full_name.trim(),
     identifier: identifier.trim(),
     email: cleanEmail,
-    role: role || 'Student',
+    role: 'Student',
     department: department ? department.trim() : 'BSIT',
     password,
     is_active: false,
-    activation_code: activationCode
+    activation_token: activationToken
   };
 
   db.requesters.push(newRequester);
   saveDb(db);
 
-  // Dispatch activation email via Resend HTTPS API
+  const activationLink = `${BASE_URL}/api/borrowers/verify-email?token=${activationToken}`;
+
+  // Brevo Transactional Email Dispatch with Dark-Theme Button Card
   try {
-    await resend.emails.send({
-      from: 'CDM SmartTrack <onboarding@resend.dev>',
-      to: cleanEmail,
-      subject: 'CDM SmartTrack - Activate Your Account',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
-          <h2 style="color: #0f172a; margin-top: 0;">Welcome to CDM SmartTrack!</h2>
-          <p style="color: #475569; font-size: 15px;">Hello <strong>${newRequester.full_name}</strong>,</p>
-          <p style="color: #475569; font-size: 15px;">Thank you for registering. Please use the activation code below to verify your account:</p>
-          <div style="background-color: #f1f5f9; padding: 18px; border-radius: 8px; text-align: center; margin: 20px 0;">
-            <span style="font-size: 28px; font-weight: bold; letter-spacing: 6px; color: #2563eb;">${activationCode}</span>
+    const sendSmtpEmail = new brevo.SendSmtpEmail();
+    sendSmtpEmail.sender = { name: "CDM SmartTrack", email: SENDER_EMAIL };
+    sendSmtpEmail.to = [{ email: cleanEmail, name: newRequester.full_name }];
+    sendSmtpEmail.subject = "Verify your CDM SmartTrack Account";
+    sendSmtpEmail.htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <body style="margin: 0; padding: 20px; background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <div style="max-width: 480px; margin: 0 auto; background-color: #161b22; border-radius: 16px; border: 1px solid #30363d; overflow: hidden; color: #ffffff;">
+          <div style="height: 4px; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
+          <div style="padding: 32px 24px; text-align: center;">
+            <div style="font-size: 38px; margin-bottom: 12px;">📦</div>
+            <h2 style="color: #ffffff; margin: 0 0 4px 0; font-size: 20px; font-weight: 800; letter-spacing: 0.5px;">CDM SMARTTRACK</h2>
+            <p style="color: #8b949e; font-size: 13px; margin: 0 0 24px 0;">Colegio de Montalban Borrower Portal</p>
+            <div style="border-top: 1px solid #21262d; margin: 0 0 24px 0;"></div>
+            
+            <p style="text-align: left; color: #f0f6fc; font-size: 15px; font-weight: 700; margin: 0 0 12px 0;">
+              Hello ${newRequester.full_name} (Student Borrower),
+            </p>
+            <p style="text-align: left; color: #8b949e; font-size: 14px; line-height: 1.5; margin: 0 0 28px 0;">
+              Your account registration has been initialized. Tap the button below to verify your email and activate your access to laboratory equipment borrowing.
+            </p>
+
+            <a href="${activationLink}" target="_blank" style="background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 15px; display: inline-block; width: 80%;">
+              Activate My Account &rarr;
+            </a>
+
+            <div style="margin-top: 28px; border: 1px dashed #30363d; border-radius: 10px; padding: 12px; background-color: #0d1117;">
+              <p style="color: #8b949e; font-size: 12px; margin: 0;">
+                ⏳ This link expires in <strong>15 minutes</strong>. If you did not initiate this request, you can safely ignore this email.
+              </p>
+            </div>
           </div>
-          <p style="color: #64748b; font-size: 13px;">If you did not register for CDM SmartTrack, please ignore this email.</p>
+          <div style="background-color: #0d1117; padding: 12px; text-align: center; border-top: 1px solid #21262d;">
+            <p style="color: #484f58; font-size: 11px; margin: 0;">Colegio de Montalban • Laboratory & Equipment Management</p>
+          </div>
         </div>
-      `
-    });
+      </body>
+      </html>
+    `;
+
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log(`[Brevo] Activation email sent successfully to: ${cleanEmail}`);
   } catch (err) {
-    console.error('Failed to dispatch activation email:', err);
+    console.error('[Brevo Error]:', err?.response?.body || err?.message || err);
   }
 
   res.json({
     success: true,
     requires_activation: true,
-    message: "Registration successful! An activation code has been sent to your email.",
-    user: {
-      full_name: newRequester.full_name,
-      identifier: newRequester.identifier,
-      email: newRequester.email,
-      role: newRequester.role,
-      department: newRequester.department,
-      is_active: false
-    }
+    email: cleanEmail,
+    message: "Activation Link Sent!"
   });
 });
 
-// ----------------- ACCOUNT ACTIVATION VERIFICATION ROUTE -----------------
-app.post(['/api/borrowers/activate', '/api/borrower/activate', '/api/public/activate'], (req, res) => {
-  const { identifier, code } = req.body;
-  if (!identifier || !code) {
-    return res.status(400).json({ error: "Borrower ID and activation code are required." });
-  }
-
+// ----------------- EMAIL LINK VERIFICATION -----------------
+app.get(['/api/borrowers/verify-email', '/api/borrower/verify-email'], (req, res) => {
+  const { token } = req.query;
   const db = loadDb();
-  const user = db.requesters.find(
-    u => u.identifier.toLowerCase() === identifier.trim().toLowerCase()
-  );
+  const user = db.requesters.find(u => u.activation_token === token);
 
   if (!user) {
-    return res.status(404).json({ error: "User not found." });
-  }
-
-  if (user.is_active) {
-    return res.status(200).json({ success: true, message: "Account is already active." });
-  }
-
-  if (user.activation_code !== code.trim()) {
-    return res.status(400).json({ error: "Invalid activation code. Please check your email." });
+    return res.status(404).send(`
+      <body style="background:#0d1117;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:80vh;text-align:center;">
+        <div style="background:#161b22;padding:32px;border-radius:12px;border:1px solid #30363d;">
+          <h2 style="color:#f85149;">Invalid or Expired Link</h2>
+          <p style="color:#8b949e;">Your account may already be activated. Return to the app and sign in.</p>
+        </div>
+      </body>
+    `);
   }
 
   user.is_active = true;
-  user.activation_code = null;
+  user.activation_token = null;
   saveDb(db);
 
-  res.json({ success: true, message: "Account successfully activated! You can now log in." });
+  return res.send(`
+    <!DOCTYPE html>
+    <html>
+      <body style="background-color: #0d1117; color: #ffffff; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 90vh; margin: 0; padding: 16px;">
+        <div style="background-color: #161b22; max-width: 420px; width: 100%; padding: 36px 24px; border-radius: 16px; border: 1px solid #30363d; text-align: center;">
+          <div style="font-size: 40px; margin-bottom: 12px; color: #10b981;">✔</div>
+          <h2 style="margin: 0 0 8px 0; font-size: 20px;">Account Activated!</h2>
+          <p style="color: #8b949e; font-size: 14px; margin-bottom: 24px;">
+            Hello <strong>${user.full_name}</strong>, your account has been successfully verified.
+          </p>
+          <div style="background-color: #0d1117; border-radius: 8px; padding: 14px; border: 1px solid #21262d;">
+            <p style="margin: 0; color: #10b981; font-weight: 600; font-size: 14px;">You can now open CDM SmartTrack and Sign In.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
-// ----------------- BORROWER LOGIN (CHECKS ACTIVATION STATUS) -----------------
-app.post(['/api/public/login', '/api/borrower/login', '/api/borrowers/login'], (req, res) => {
+// ----------------- BORROWER LOGIN -----------------
+app.post(['/api/borrowers/login', '/api/borrower/login', '/api/public/login'], (req, res) => {
   const { identifier, password } = req.body;
-  if (!identifier || !password) return res.status(400).json({ error: "Enter ID and password" });
-
   const db = loadDb();
   const user = db.requesters.find(
-    u => u.identifier.toLowerCase() === identifier.trim().toLowerCase() && u.password === password
+    u => (u.identifier || '').toLowerCase() === (identifier || '').trim().toLowerCase() && u.password === password
   );
 
-  if (!user) {
-    return res.status(401).json({ error: "Invalid ID number or password." });
-  }
-
+  if (!user) return res.status(401).json({ error: "Invalid ID or password." });
   if (user.is_active === false) {
-    return res.status(403).json({ 
-      error: "Account not activated. Please check your email for the activation code.",
-      requires_activation: true,
-      identifier: user.identifier
+    return res.status(403).json({
+      error: "Account not activated. Please open your Gmail and tap the activation button.",
+      requires_activation: true
     });
   }
 
@@ -248,169 +218,50 @@ app.post(['/api/public/login', '/api/borrower/login', '/api/borrowers/login'], (
     user: {
       full_name: user.full_name,
       identifier: user.identifier,
-      email: user.email || '',
+      email: user.email,
       role: user.role,
       department: user.department
     }
   });
 });
 
-// ----------------- PASSWORD RECOVERY (RESEND HTTPS API) -----------------
-app.post(['/api/borrowers/forgot-password', '/api/borrower/forgot-password', '/api/forgot-password'], async (req, res) => {
-  const { email } = req.body;
-
-  if (!email || !email.trim()) {
-    return res.status(400).json({ error: 'Gmail address is required.' });
-  }
-
-  const cleanEmail = email.trim().toLowerCase();
-  const db = loadDb();
-
-  const user = db.requesters.find(u => (u.email || '').toLowerCase() === cleanEmail);
-  if (!user) {
-    return res.status(404).json({ error: 'No account found registered with this Gmail address.' });
-  }
-
-  const tempPassword = Math.random().toString(36).substring(2, 8).toUpperCase();
-  user.password = tempPassword;
-  saveDb(db);
-
-  try {
-    const { error } = await resend.emails.send({
-      from: 'CDM SmartTrack <onboarding@resend.dev>',
-      to: cleanEmail,
-      subject: 'CDM SmartTrack - Password Recovery & Credentials',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
-          <h2 style="color: #0f172a; margin-top: 0;">CDM SmartTrack</h2>
-          <p style="color: #475569; font-size: 15px;">Hello <strong>${user.full_name || 'Borrower'}</strong>,</p>
-          <p style="color: #475569; font-size: 15px;">You requested password recovery for your SmartTrack account. Use the credentials below to log in:</p>
-          <div style="background-color: #f1f5f9; padding: 16px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 6px 0; color: #334155;"><strong>Borrower ID:</strong> ${user.identifier}</p>
-            <p style="margin: 6px 0; color: #334155;"><strong>Temporary Password:</strong> <code style="font-size: 16px; color: #2563eb; font-weight: bold;">${tempPassword}</code></p>
-          </div>
-          <p style="color: #64748b; font-size: 13px;">Please change your password after logging in for account security.</p>
-        </div>
-      `,
-    });
-
-    if (error) {
-      console.error('Resend API Error:', error);
-      return res.status(500).json({ error: error.message || 'Failed to dispatch email via Resend' });
-    }
-
-    return res.status(200).json({
-      message: 'Temporary password sent to your Gmail inbox. Please check your inbox or spam folder.',
-    });
-  } catch (err) {
-    console.error('Email API Dispatch Error:', err);
-    return res.status(500).json({ error: 'Failed to send recovery email. Please check server configuration.' });
-  }
-});
-
-// ----------------- INVENTORY ROUTES -----------------
+// ----------------- CATALOG / INVENTORY -----------------
 app.get('/api/public/inventory', (req, res) => {
-  const db = loadDb();
-  res.json(db.inventory);
+  res.json(loadDb().inventory);
 });
 
-app.post('/api/admin/inventory', (req, res) => {
-  const { name, category, quantity, asset_code } = req.body;
-  const db = loadDb();
-  const newItem = {
-    id: db.inventory.length + 1,
-    name,
-    category,
-    quantity: parseInt(quantity),
-    status: parseInt(quantity) > 0 ? "Available" : "Out of Stock",
-    asset_code
-  };
-  db.inventory.push(newItem);
-  saveDb(db);
-  res.json({ success: true, id: newItem.id });
-});
-
-// ----------------- REQUISITION REQUEST ROUTES -----------------
+// ----------------- BORROW REQUESTS & TICKETS -----------------
 app.post('/api/public/requests', (req, res) => {
-  const { requester_name, department, item_name, quantity, purpose, role, identifier } = req.body;
-  if (!requester_name || !item_name || !quantity) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
+  const { requester_name, identifier, item_name, quantity, purpose } = req.body;
   const db = loadDb();
+
+  const ticketNumber = db.requests.length + 33;
   const newTicket = {
-    id: db.requests.length + 1,
+    id: ticketNumber,
     requester_name,
-    identifier: identifier || 'N/A',
-    role: role || 'Requester',
-    department: department || '',
+    identifier,
     item_name,
-    quantity: parseInt(quantity),
-    purpose: purpose || '',
+    quantity: parseInt(quantity) || 1,
+    purpose: purpose || 'Academic Laboratory Project',
     status: 'PENDING',
-    created_at: new Date().toISOString()
+    created_at: new Date().toLocaleDateString('en-US')
   };
+
   db.requests.unshift(newTicket);
   saveDb(db);
   res.json({ success: true, ticket_id: newTicket.id });
 });
 
-app.get(['/api/admin/requests', '/api/public/requests'], (req, res) => {
+app.get(['/api/public/requests', '/api/admin/requests'], (req, res) => {
   const db = loadDb();
   const { identifier } = req.query;
   if (identifier) {
-    const userTickets = db.requests.filter(
-      r => (r.identifier || '').toLowerCase() === identifier.trim().toLowerCase()
-    );
-    return res.json(userTickets);
+    return res.json(db.requests.filter(r => (r.identifier || '').toLowerCase() === identifier.trim().toLowerCase()));
   }
   res.json(db.requests);
 });
 
-app.patch('/api/admin/requests/:id', (req, res) => {
-  const { status } = req.body;
-  const db = loadDb();
-  const ticket = db.requests.find(r => r.id === parseInt(req.params.id));
-  if (ticket) {
-    ticket.status = status;
-    saveDb(db);
-    res.json({ success: true });
-  } else {
-    res.status(404).json({ error: "Ticket not found" });
-  }
-});
-
-// ----------------- MOBILE SCANNER & DISPATCH ROUTES -----------------
-app.get('/api/mobile/item/:code', (req, res) => {
-  const db = loadDb();
-  const item = db.inventory.find(i => i.asset_code === req.params.code);
-  if (item) res.json(item);
-  else res.status(404).json({ error: "Asset tag not found" });
-});
-
-app.post('/api/mobile/dispatch', (req, res) => {
-  const { asset_code, borrower_name, custodian_id } = req.body;
-  const db = loadDb();
-  const item = db.inventory.find(i => i.asset_code === asset_code);
-
-  if (!item) return res.status(404).json({ error: "Item not registered" });
-  if (item.quantity <= 0) return res.status(400).json({ error: "Item currently out of stock" });
-
-  item.quantity -= 1;
-  if (item.quantity === 0) item.status = "Out of Stock";
-
-  db.borrow_logs.unshift({
-    id: db.borrow_logs.length + 1,
-    asset_code,
-    borrower_name,
-    custodian_id: custodian_id || "Desk-Custodian",
-    released_at: new Date().toISOString()
-  });
-
-  saveDb(db);
-  res.json({ success: true, message: `Dispatched ${item.name} to ${borrower_name}` });
-});
-
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`SmartTrack Core API running smoothly on port ${PORT}`);
 });
