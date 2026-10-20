@@ -15,7 +15,7 @@ import {
   Platform,
 } from 'react-native';
 
-const API_BASE_URL = 'https://smarttrack-backend-v614.onrender.com';
+const API_BASE_URL = 'https://smarttrack-backend-v6l4.onrender.com';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -62,21 +62,17 @@ export default function App() {
   }, [user]);
 
   // SAFE REQUEST HELPER: Handles cold starts and non-JSON responses cleanly
+  // SAFE REQUEST HELPER: Handles cold starts and non-JSON responses cleanly
   const safeFetch = async (url, options = {}) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for cold Render starts
-
     try {
       const response = await fetch(url, {
         ...options,
-        signal: controller.signal,
         headers: {
-          Accept: 'application/json',
+          'Accept': 'application/json',
           'Content-Type': 'application/json',
           ...(options.headers || {}),
         },
       });
-      clearTimeout(timeoutId);
 
       const contentType = response.headers.get('content-type') || '';
       let data = null;
@@ -87,21 +83,17 @@ export default function App() {
         const rawText = await response.text();
         throw new Error(
           response.status === 404
-            ? 'Endpoint route not found on server (404). Ensure backend is deployed.'
-            : `Server returned non-JSON (${response.status}): ${rawText.slice(0, 120)}`
+            ? 'Endpoint route not found on server (404).'
+            : `Server returned non-JSON (${response.status}): ${rawText.slice(0, 100)}`
         );
       }
 
       if (!response.ok) {
-        throw new Error(data?.error || data?.message || `Request failed with status ${response.status}`);
+        throw new Error(data?.error || data?.message || `Request failed (${response.status})`);
       }
 
       return data;
     } catch (err) {
-      clearTimeout(timeoutId);
-      if (err.name === 'AbortError') {
-        throw new Error('Server took too long to respond. Render is waking up; please try again in 15 seconds.');
-      }
       throw err;
     }
   };
