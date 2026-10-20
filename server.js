@@ -11,13 +11,22 @@ app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'data.json');
 
-// Nodemailer Gmail SMTP Transporter
+// Nodemailer Gmail SMTP Transporter (Port 587 STARTTLS)
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  tls: {
+    rejectUnauthorized: false
+  },
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 20000
 });
 
 // Initial seed database structure
@@ -207,8 +216,10 @@ app.post(['/api/borrowers/forgot-password', '/api/borrower/forgot-password', '/a
       message: 'Temporary password sent to your Gmail inbox. Please check your inbox or spam folder.',
     });
   } catch (err) {
-    console.error('Nodemailer SMTP Error:', err);
-    return res.status(500).json({ error: 'Failed to send recovery email. Please check server Gmail configuration.' });
+    console.error('Nodemailer SMTP Error Details:', err);
+    return res.status(500).json({ 
+      error: `Failed to send recovery email: ${err.message || 'SMTP Authentication Error'}` 
+    });
   }
 });
 
