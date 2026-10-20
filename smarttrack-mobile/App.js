@@ -23,6 +23,7 @@ export default function App() {
 
   // Auth form states
   const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [loginId, setLoginId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
@@ -32,6 +33,10 @@ export default function App() {
   const [regDept, setRegDept] = useState('BSIT');
   const [regPassword, setRegPassword] = useState('');
 
+  // Forgot password modal
+  const [forgotModalVisible, setForgotModalVisible] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+
   // UI state
   const [loading, setLoading] = useState(false);
   const [showActivationModal, setShowActivationModal] = useState(false);
@@ -39,6 +44,7 @@ export default function App() {
 
   // Data states
   const [inventory, setInventory] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [tickets, setTickets] = useState([]);
 
@@ -65,7 +71,7 @@ export default function App() {
         ...options,
         signal: controller.signal,
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
           'Content-Type': 'application/json',
           ...(options.headers || {}),
         },
@@ -153,11 +159,35 @@ export default function App() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!forgotEmail.trim()) {
+      Alert.alert('Required', 'Please enter your registered email address.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await safeFetch(`${API_BASE_URL}/api/auth/forgot-password`, {
+        method: 'POST',
+        body: JSON.stringify({ email: forgotEmail.trim().toLowerCase() }),
+      });
+
+      Alert.alert('Temporary Password Sent', 'Check your Gmail inbox for your temporary password.');
+      setForgotModalVisible(false);
+      setForgotEmail('');
+    } catch (err) {
+      Alert.alert('Reset Failed', err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ----------------- DATA HANDLERS -----------------
   const fetchInventory = async () => {
     try {
       const data = await safeFetch(`${API_BASE_URL}/api/public/inventory`);
-      setInventory(data);
+      const items = Array.isArray(data) ? data : data.items || [];
+      setInventory(items);
     } catch (err) {
       console.warn('Inventory fetch error:', err.message);
     }
@@ -167,7 +197,8 @@ export default function App() {
     if (!user) return;
     try {
       const data = await safeFetch(`${API_BASE_URL}/api/public/requests?identifier=${encodeURIComponent(user.identifier)}`);
-      setTickets(data);
+      const requests = Array.isArray(data) ? data : data.tickets || [];
+      setTickets(requests);
     } catch (err) {
       console.warn('Tickets fetch error:', err.message);
     }
@@ -188,6 +219,7 @@ export default function App() {
         body: JSON.stringify({
           requester_name: user.full_name,
           identifier: user.identifier,
+          item_id: selectedItem.id,
           item_name: selectedItem.name,
           quantity: qty,
           purpose: borrowPurpose.trim() || 'Laboratory Work',
@@ -199,6 +231,7 @@ export default function App() {
       setSelectedItem(null);
       setBorrowPurpose('');
       setBorrowQty('1');
+      fetchInventory();
       fetchTickets();
       setActiveTab('tickets');
     } catch (err) {
@@ -209,9 +242,14 @@ export default function App() {
   };
 
   const categories = ['All', 'Equipment', 'Laboratory', 'Audio/Visual'];
-  const filteredInventory = selectedCategory === 'All'
-    ? inventory
-    : inventory.filter(item => item.category === selectedCategory);
+  const filteredInventory = inventory.filter(item => {
+    const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+    const matchesSearch =
+      (item.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.asset_code || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.category || '').toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
   // ----------------- AUTH SCREENS -----------------
   if (!user) {
@@ -262,23 +300,37 @@ export default function App() {
                 />
 
                 <Text style={styles.inputLabel}>Department</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="BSIT"
-                  placeholderTextColor="#484F58"
-                  value={regDept}
-                  onChangeText={setRegDept}
-                />
+                <View style={styles.deptRow}>
+                  {['BSIT', 'BSBA', 'BSED', 'BSHM'].map(dept => (
+                    <TouchableOpacity
+                      key={dept}
+                      style={[styles.deptChip, regDept === dept && styles.deptChipSelected]}
+                      onPress={() => setRegDept(dept)}
+                    >
+                      <Text style={[styles.deptChipText, regDept === dept && styles.deptChipTextSelected]}>
+                        {dept}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
                 <Text style={styles.inputLabel}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="••••••••"
-                  placeholderTextColor="#484F58"
-                  secureTextEntry
-                  value={regPassword}
-                  onChangeText={setRegPassword}
-                />
+                <View style={styles.passwordWrapper}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="••••••••"
+                    placeholderTextColor="#484F58"
+                    secureTextEntry={!showPassword}
+                    value={regPassword}
+                    onChangeText={setRegPassword}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeButton}
+                    onPress={() => setShowPassword(!showPassword)}
+                  >
+                    <Text style={styles.eyeIcon}>{showPassword ? '👁' : '👁‍🗨'}</Text>
+                  </TouchableOpacity>
+                </View>
 
                 <TouchableOpacity
                   style={[styles.primaryButton, loading && styles.buttonDisabled]}
@@ -312,14 +364,29 @@ export default function App() {
                 />
 
                 <Text style={styles.inputLabel}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="••••••••"
-                  placeholderTextColor="#484F58"
-                  secureTextEntry
-                  value={loginPassword}
-                  onChangeText={setLoginPassword}
-                />
+                <View style={styles.passwordWrapper}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="••••••••"
+                    placeholderTextColor="#484F58"
+                    secureTextEntry={!showPassword}
+                    value={loginPassword}
+                    onChangeText={setLoginPassword}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeButton}
+                    onPress={() => setShowPassword(!showPassword)}
+                  >
+                    <Text style={styles.eyeIcon}>{showPassword ? '👁' : '👁‍🗨'}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.forgotBtn}
+                  onPress={() => setForgotModalVisible(true)}
+                >
+                  <Text style={styles.forgotBtnText}>Forgot Password?</Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.primaryButton, loading && styles.buttonDisabled]}
@@ -343,6 +410,49 @@ export default function App() {
             )}
           </View>
 
+          {/* FORGOT PASSWORD MODAL */}
+          <Modal
+            visible={forgotModalVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setForgotModalVisible(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalCard}>
+                <Text style={styles.modalHeader}>Reset Password</Text>
+                <Text style={styles.modalMessage}>
+                  Enter your registered Gmail. We will generate and email a temporary password to your inbox.
+                </Text>
+                <TextInput
+                  style={[styles.input, { width: '100%', marginBottom: 14 }]}
+                  placeholder="student@gmail.com"
+                  placeholderTextColor="#484F58"
+                  value={forgotEmail}
+                  onChangeText={setForgotEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={[styles.modalButton, loading && styles.buttonDisabled]}
+                  onPress={handleForgotPassword}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalButtonText}>Send Temporary Password</Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => setForgotModalVisible(false)}
+                >
+                  <Text style={styles.cancelButtonText}>Back to Sign In</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+
           {/* ACTIVATION CONFIRMATION MODAL */}
           <Modal
             visible={showActivationModal}
@@ -354,9 +464,7 @@ export default function App() {
               <View style={styles.modalCard}>
                 <Text style={styles.modalIcon}>📬</Text>
                 <Text style={styles.modalHeader}>Activation Link Sent!</Text>
-                <Text style={styles.modalMessage}>
-                  We sent an activation link to:
-                </Text>
+                <Text style={styles.modalMessage}>We sent an activation link to:</Text>
                 <Text style={styles.modalEmail}>{activationEmailSent}</Text>
                 <Text style={styles.modalSubMessage}>
                   Please open your Gmail and tap the "Activate My Account" button to complete registration.
@@ -389,7 +497,7 @@ export default function App() {
         <View>
           <Text style={styles.headerTitle}>CDM SMARTTRACK</Text>
           <Text style={styles.headerSubtitle}>
-            {user.full_name} • {user.identifier}
+            {user.full_name} • {user.identifier} ({user.department || 'BSIT'})
           </Text>
         </View>
         <TouchableOpacity style={styles.logoutButton} onPress={() => setUser(null)}>
@@ -401,7 +509,10 @@ export default function App() {
       <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'inventory' && styles.activeTab]}
-          onPress={() => setActiveTab('inventory')}
+          onPress={() => {
+            setActiveTab('inventory');
+            fetchInventory();
+          }}
         >
           <Text style={[styles.tabText, activeTab === 'inventory' && styles.activeTabText]}>
             Available Items
@@ -423,6 +534,17 @@ export default function App() {
       {/* Inventory Tab */}
       {activeTab === 'inventory' ? (
         <View style={styles.flexOne}>
+          {/* Live Search Bar */}
+          <View style={styles.searchContainer}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by equipment name, code, or category..."
+              placeholderTextColor="#484F58"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryBar}>
             {categories.map(cat => (
               <TouchableOpacity
@@ -460,7 +582,9 @@ export default function App() {
                       setBorrowModalVisible(true);
                     }}
                   >
-                    <Text style={styles.borrowBtnText}>Borrow</Text>
+                    <Text style={styles.borrowBtnText}>
+                      {item.quantity === 0 ? 'Out of Stock' : 'Borrow'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -473,28 +597,31 @@ export default function App() {
           data={tickets}
           keyExtractor={item => item.id.toString()}
           contentContainerStyle={styles.listPadding}
-          renderItem={({ item }) => (
-            <View style={styles.ticketCard}>
-              <View style={styles.ticketTopRow}>
-                <Text style={styles.ticketId}>Ticket #{item.id}</Text>
-                <View
-                  style={[
-                    styles.statusPill,
-                    item.status === 'APPROVED' && styles.statusApproved,
-                    item.status === 'CLAIMED' && styles.statusClaimed,
-                    item.status === 'RETURNED' && styles.statusReturned,
-                  ]}
-                >
-                  <Text style={styles.statusPillText}>{item.status}</Text>
+          renderItem={({ item }) => {
+            const rawStatus = (item.status || 'PENDING').toUpperCase();
+            return (
+              <View style={styles.ticketCard}>
+                <View style={styles.ticketTopRow}>
+                  <Text style={styles.ticketId}>Ticket #{item.id}</Text>
+                  <View
+                    style={[
+                      styles.statusPill,
+                      rawStatus === 'APPROVED' && styles.statusApproved,
+                      rawStatus === 'CLAIMED' && styles.statusClaimed,
+                      rawStatus === 'RETURNED' && styles.statusReturned,
+                    ]}
+                  >
+                    <Text style={styles.statusPillText}>{rawStatus}</Text>
+                  </View>
                 </View>
+                <Text style={styles.ticketItemName}>
+                  {item.item_name} ({item.quantity} unit)
+                </Text>
+                <Text style={styles.ticketPurpose}>Purpose: {item.purpose}</Text>
+                <Text style={styles.ticketDate}>Date: {item.created_at}</Text>
               </View>
-              <Text style={styles.ticketItemName}>
-                {item.item_name} ({item.quantity} unit)
-              </Text>
-              <Text style={styles.ticketPurpose}>Purpose: {item.purpose}</Text>
-              <Text style={styles.ticketDate}>Date: {item.created_at}</Text>
-            </View>
-          )}
+            );
+          }}
         />
       )}
 
@@ -613,6 +740,63 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
   },
+  passwordWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0D1117',
+    borderWidth: 1,
+    borderColor: '#30363D',
+    borderRadius: 8,
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
+  eyeButton: {
+    paddingHorizontal: 12,
+  },
+  eyeIcon: {
+    fontSize: 16,
+  },
+  forgotBtn: {
+    alignSelf: 'flex-end',
+    marginTop: 8,
+  },
+  forgotBtnText: {
+    color: '#58A6FF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  deptRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  deptChip: {
+    flex: 1,
+    backgroundColor: '#0D1117',
+    borderWidth: 1,
+    borderColor: '#30363D',
+    borderRadius: 6,
+    paddingVertical: 8,
+    marginHorizontal: 3,
+    alignItems: 'center',
+  },
+  deptChipSelected: {
+    borderColor: '#10B981',
+    backgroundColor: '#10B98122',
+  },
+  deptChipText: {
+    color: '#8B949E',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  deptChipTextSelected: {
+    color: '#10B981',
+  },
   textArea: {
     height: 80,
     textAlignVertical: 'top',
@@ -675,12 +859,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8B949E',
     textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 20,
   },
   modalEmail: {
     fontSize: 15,
     fontWeight: '700',
     color: '#10B981',
-    marginVertical: 8,
+    marginBottom: 8,
     textAlign: 'center',
   },
   modalSubMessage: {
@@ -763,6 +949,20 @@ const styles = StyleSheet.create({
   },
   activeTabText: {
     color: '#FFFFFF',
+  },
+  searchContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  searchInput: {
+    backgroundColor: '#161B22',
+    borderWidth: 1,
+    borderColor: '#30363D',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+    fontSize: 14,
   },
   categoryBar: {
     paddingHorizontal: 16,
