@@ -1,9 +1,9 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const app = express();
 app.use(cors());
@@ -11,23 +11,8 @@ app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'data.json');
 
-// Nodemailer Gmail SMTP Transporter (Port 587 STARTTLS)
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  requireTLS: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  connectionTimeout: 15000,
-  greetingTimeout: 15000,
-  socketTimeout: 20000
-});
+// Initialize Resend Client (uses HTTPS Port 443 — reliable on Render)
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Initial seed database structure
 const initialData = {
@@ -35,8 +20,28 @@ const initialData = {
     { id: 1, full_name: "Lead Custodian", username: "admin", password: "password123" }
   ],
   requesters: [
-    { id: 1, full_name: "Sample Student", email: "aaronjustine242@gmail.com", identifier: "2023-0001", role: "Student", department: "Institute of Computing Studies", password: "password123" },
-    { id: 2, full_name: "Prof. Juan Dela Cruz", email: "teacher@cdm.edu.ph", identifier: "FAC-901", role: "Teacher", department: "Institute of Computing Studies", password: "password123" }
+    { 
+      id: 1, 
+      full_name: "Sample Student", 
+      email: "aaronjustine242@gmail.com", 
+      identifier: "2023-0001", 
+      role: "Student", 
+      department: "Institute of Computing Studies", 
+      password: "password123",
+      is_active: true,
+      activation_code: null
+    },
+    { 
+      id: 2, 
+      full_name: "Prof. Juan Dela Cruz", 
+      email: "teacher@cdm.edu.ph", 
+      identifier: "FAC-901", 
+      role: "Teacher", 
+      department: "Institute of Computing Studies", 
+      password: "password123",
+      is_active: true,
+      activation_code: null
+    }
   ],
   inventory: [
     { id: 1, name: "Epson Projector EB-X06", category: "Equipment", quantity: 5, status: "Available", asset_code: "CDM-EQ-001" },
@@ -109,44 +114,114 @@ app.post('/api/admin/login', (req, res) => {
   res.json({ success: true, admin: { full_name: admin.full_name, username: admin.username } });
 });
 
-// ----------------- PUBLIC & BORROWER AUTH -----------------
-app.post(['/api/public/signup', '/api/borrower/register', '/api/borrowers/register'], (req, res) => {
+// ----------------- BORROWER REGISTRATION WITH EMAIL ACTIVATION -----------------
+app.post(['/api/public/signup', '/api/borrower/register', '/api/borrowers/register'], async (req, res) => {
   const { full_name, identifier, email, role, department, password } = req.body;
-  if (!full_name || !identifier || !password) {
-    return res.status(400).json({ error: "All registration fields are required" });
+  if (!full_name || !identifier || !password || !email) {
+    return res.status(400).json({ error: "All registration fields including email are required." });
   }
 
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanId = identifier.trim().toLowerCase();
   const db = loadDb();
-  const exists = db.requesters.find(u => u.identifier.toLowerCase() === identifier.trim().toLowerCase());
-  if (exists) {
-    return res.status(409).json({ error: `${role === 'Student' ? 'Student Number' : 'Faculty ID'} is already registered` });
+
+  const idExists = db.requesters.find(u => u.identifier.toLowerCase() === cleanId);
+  if (idExists) {
+    return res.status(409).json({ error: `${role === 'Student' ? 'Student Number' : 'Faculty ID'} is already registered.` });
   }
+
+  const emailExists = db.requesters.find(u => (u.email || '').toLowerCase() === cleanEmail);
+  if (emailExists) {
+    return res.status(409).json({ error: "This Gmail address is already registered." });
+  }
+
+  // 6-digit numerical activation code
+  const activationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
   const newRequester = {
     id: db.requesters.length + 1,
     full_name: full_name.trim(),
     identifier: identifier.trim(),
-    email: email ? email.trim().toLowerCase() : '',
+    email: cleanEmail,
     role: role || 'Student',
     department: department ? department.trim() : 'BSIT',
-    password
+    password,
+    is_active: false,
+    activation_code: activationCode
   };
 
   db.requesters.push(newRequester);
   saveDb(db);
 
+  // Dispatch activation email via Resend HTTPS API
+  try {
+    await resend.emails.send({
+      from: 'CDM SmartTrack <onboarding@resend.dev>',
+      to: cleanEmail,
+      subject: 'CDM SmartTrack - Activate Your Account',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <h2 style="color: #0f172a; margin-top: 0;">Welcome to CDM SmartTrack!</h2>
+          <p style="color: #475569; font-size: 15px;">Hello <strong>${newRequester.full_name}</strong>,</p>
+          <p style="color: #475569; font-size: 15px;">Thank you for registering. Please use the activation code below to verify your account:</p>
+          <div style="background-color: #f1f5f9; padding: 18px; border-radius: 8px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 28px; font-weight: bold; letter-spacing: 6px; color: #2563eb;">${activationCode}</span>
+          </div>
+          <p style="color: #64748b; font-size: 13px;">If you did not register for CDM SmartTrack, please ignore this email.</p>
+        </div>
+      `
+    });
+  } catch (err) {
+    console.error('Failed to dispatch activation email:', err);
+  }
+
   res.json({
     success: true,
+    requires_activation: true,
+    message: "Registration successful! An activation code has been sent to your email.",
     user: {
       full_name: newRequester.full_name,
       identifier: newRequester.identifier,
       email: newRequester.email,
       role: newRequester.role,
-      department: newRequester.department
+      department: newRequester.department,
+      is_active: false
     }
   });
 });
 
+// ----------------- ACCOUNT ACTIVATION VERIFICATION ROUTE -----------------
+app.post(['/api/borrowers/activate', '/api/borrower/activate', '/api/public/activate'], (req, res) => {
+  const { identifier, code } = req.body;
+  if (!identifier || !code) {
+    return res.status(400).json({ error: "Borrower ID and activation code are required." });
+  }
+
+  const db = loadDb();
+  const user = db.requesters.find(
+    u => u.identifier.toLowerCase() === identifier.trim().toLowerCase()
+  );
+
+  if (!user) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  if (user.is_active) {
+    return res.status(200).json({ success: true, message: "Account is already active." });
+  }
+
+  if (user.activation_code !== code.trim()) {
+    return res.status(400).json({ error: "Invalid activation code. Please check your email." });
+  }
+
+  user.is_active = true;
+  user.activation_code = null;
+  saveDb(db);
+
+  res.json({ success: true, message: "Account successfully activated! You can now log in." });
+});
+
+// ----------------- BORROWER LOGIN (CHECKS ACTIVATION STATUS) -----------------
 app.post(['/api/public/login', '/api/borrower/login', '/api/borrowers/login'], (req, res) => {
   const { identifier, password } = req.body;
   if (!identifier || !password) return res.status(400).json({ error: "Enter ID and password" });
@@ -155,8 +230,17 @@ app.post(['/api/public/login', '/api/borrower/login', '/api/borrowers/login'], (
   const user = db.requesters.find(
     u => u.identifier.toLowerCase() === identifier.trim().toLowerCase() && u.password === password
   );
+
   if (!user) {
-    return res.status(401).json({ error: "Invalid ID number or password" });
+    return res.status(401).json({ error: "Invalid ID number or password." });
+  }
+
+  if (user.is_active === false) {
+    return res.status(403).json({ 
+      error: "Account not activated. Please check your email for the activation code.",
+      requires_activation: true,
+      identifier: user.identifier
+    });
   }
 
   res.json({
@@ -171,7 +255,7 @@ app.post(['/api/public/login', '/api/borrower/login', '/api/borrowers/login'], (
   });
 });
 
-// ----------------- PASSWORD RECOVERY (GMAIL SMTP) -----------------
+// ----------------- PASSWORD RECOVERY (RESEND HTTPS API) -----------------
 app.post(['/api/borrowers/forgot-password', '/api/borrower/forgot-password', '/api/forgot-password'], async (req, res) => {
   const { email } = req.body;
 
@@ -192,8 +276,8 @@ app.post(['/api/borrowers/forgot-password', '/api/borrower/forgot-password', '/a
   saveDb(db);
 
   try {
-    const mailOptions = {
-      from: `"CDM SmartTrack" <${process.env.EMAIL_USER}>`,
+    const { error } = await resend.emails.send({
+      from: 'CDM SmartTrack <onboarding@resend.dev>',
       to: cleanEmail,
       subject: 'CDM SmartTrack - Password Recovery & Credentials',
       html: `
@@ -208,18 +292,19 @@ app.post(['/api/borrowers/forgot-password', '/api/borrower/forgot-password', '/a
           <p style="color: #64748b; font-size: 13px;">Please change your password after logging in for account security.</p>
         </div>
       `,
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (error) {
+      console.error('Resend API Error:', error);
+      return res.status(500).json({ error: error.message || 'Failed to dispatch email via Resend' });
+    }
 
     return res.status(200).json({
       message: 'Temporary password sent to your Gmail inbox. Please check your inbox or spam folder.',
     });
   } catch (err) {
-    console.error('Nodemailer SMTP Error Details:', err);
-    return res.status(500).json({ 
-      error: `Failed to send recovery email: ${err.message || 'SMTP Authentication Error'}` 
-    });
+    console.error('Email API Dispatch Error:', err);
+    return res.status(500).json({ error: 'Failed to send recovery email. Please check server configuration.' });
   }
 });
 
