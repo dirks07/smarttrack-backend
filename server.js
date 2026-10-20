@@ -48,41 +48,53 @@ function saveDb(data) {
   }
 }
 
-const GMAIL_USER = process.env.GMAIL_USER || 'dirkshaned@gmail.com';
-const GMAIL_APP_PASS = process.env.GMAIL_APP_PASS;
+// 1. SANITIZED SMTP CONFIGURATION & PREFLIGHT
+const SMTP_USER = (process.env.GMAIL_USER || process.env.EMAIL_USER || '').trim();
+const SMTP_PASS = (process.env.GMAIL_APP_PASS || process.env.EMAIL_PASS || '').trim().replace(/\s+/g, '');
 
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 465,
   secure: true,
   auth: {
-    user: GMAIL_USER,
-    pass: GMAIL_APP_PASS,
+    user: SMTP_USER,
+    pass: SMTP_PASS
   },
+  logger: true,
+  debug: true,
   tls: {
-    rejectUnauthorized: false,
-  },
+    rejectUnauthorized: false
+  }
 });
 
-function sendEmailAsync(mailOptions) {
-  if (!GMAIL_APP_PASS) {
-    console.warn('[Warning] GMAIL_APP_PASS not set in environment variables. Email skipped.');
-    return;
-  }
-  transporter.sendMail(mailOptions)
-    .then(info => console.log(`[Nodemailer] Email sent: ${info.response || 'Success'}`))
-    .catch(err => console.error('[Nodemailer Error]:', err.message));
+if (SMTP_USER && SMTP_PASS) {
+  transporter.verify((error, success) => {
+    if (error) {
+      console.error('[SMTP Preflight FAILED]: Mail server rejected configuration:');
+      console.error(`  - Code: ${error.code}`);
+      console.error(`  - Response: ${error.response || error.message}`);
+    } else {
+      console.log(`[SMTP Preflight READY]: Authenticated as ${SMTP_USER}. Ready to dispatch.`);
+    }
+  });
+} else {
+  console.warn('[SMTP Warning]: Credentials missing in environment variables.');
 }
 
 app.get('/', (req, res) => {
   res.json({ success: true, message: 'SmartTrack Core API running smoothly.' });
 });
 
+// 2. REGISTRATION CONTROLLER WITH VERBOSE LOGS
 app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/signup'], async (req, res) => {
   try {
     const { full_name, identifier, email, department, password } = req.body;
+
     if (!full_name || !identifier || !password || !email) {
-      return res.status(400).json({ success: false, error: 'All registration fields are required.' });
+      return res.status(400).json({
+        success: false,
+        error: 'All registration fields are required.'
+      });
     }
 
     const cleanEmail = email.trim().toLowerCase();
@@ -98,7 +110,10 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
     );
 
     if (existingIndex !== -1) {
-      return res.status(400).json({ success: false, error: 'An account with that ID or Email already exists.' });
+      return res.status(400).json({
+        success: false,
+        error: 'An account with that ID or Email already exists.'
+      });
     }
 
     const token = crypto.randomBytes(24).toString('hex');
@@ -109,46 +124,72 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
       email: cleanEmail,
       department: department ? department.trim() : 'BSIT',
       password: password,
-      is_active: true,
+      is_active: false,
       activation_token: token,
       created_at: new Date().toISOString()
     };
 
-    db.requesters.push(newBorrower);
-    saveDb(db);
-
-    const backendUrl = process.env.RENDER_BASE_URL || 'https://smarttrack-backend-v6l4.onrender.com';
+    const backendUrl = (process.env.RENDER_BASE_URL || 'https://smarttrack-backend-v6l4.onrender.com').replace(/\/+$/, '');
     const activationLink = `${backendUrl}/api/borrowers/verify-email?token=${token}`;
 
-    sendEmailAsync({
-      from: `"CDM SmartTrack" <${GMAIL_USER}>`,
-      to: cleanEmail,
-      subject: 'Verify your CDM SmartTrack Account',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; background-color: #f9f9f9; border-radius: 8px;">
-          <h2 style="color: #059669;">Welcome to CDM SmartTrack!</h2>
-          <p>Hello <b>${full_name.trim()}</b>,</p>
-          <p>Your account has been created for Colegio de Montalban Asset Tracking.</p>
-          <div style="margin: 25px 0;">
-            <a href="${activationLink}" style="background-color: #059669; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-              Activate My Account &rarr;
-            </a>
-          </div>
-          <p style="color: #666; font-size: 13px;">Or copy and paste this link in your browser:</p>
-          <p style="color: #059669; font-size: 12px; word-break: break-all;">${activationLink}</p>
-        </div>
-      `
-    });
+    console.log(`[Registration Attempt] User: ${cleanId} | Email: ${cleanEmail}`);
 
-    return res.status(201).json({
-      success: true,
-      autoActivated: true,
-      message: 'Account created and activated successfully! You can sign in now.',
-      activationLink
-    });
+    try {
+      const mailInfo = await transporter.sendMail({
+        from: `"CDM SmartTrack" <${SMTP_USER}>`,
+        to: cleanEmail,
+        subject: 'Verify your CDM SmartTrack Account',
+        text: `Hello ${full_name.trim()},\n\nPlease activate your CDM SmartTrack account by opening this URL:\n${activationLink}\n\nIf you did not request this, please disregard.`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;">
+            <h2 style="color: #059669; margin-top: 0;">CDM SmartTrack Verification</h2>
+            <p style="font-size: 15px; color: #334155;">Hello <b>${full_name.trim()}</b>,</p>
+            <p style="font-size: 14px; color: #475569; line-height: 1.5;">
+              Your borrower account has been registered for Colegio de Montalban Asset Tracking. Please click below to verify your email address and activate your account.
+            </p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${activationLink}" style="background-color: #059669; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 15px; display: inline-block;">
+                Activate My Account &rarr;
+              </a>
+            </div>
+            <p style="font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+              If the button does not work, copy and paste this link into your browser:<br>
+              <a href="${activationLink}" style="color: #059669; word-break: break-all;">${activationLink}</a>
+            </p>
+          </div>
+        `
+      });
+
+      console.log(`[SMTP Sent]: Delivered to ${cleanEmail}. Message ID: ${mailInfo.messageId}`);
+
+      db.requesters.push(newBorrower);
+      saveDb(db);
+
+      return res.status(201).json({
+        success: true,
+        message: 'Activation link sent! Please check your email inbox to activate your account.'
+      });
+
+    } catch (mailError) {
+      console.error('[SMTP Dispatch Failure]:');
+      console.error(`  - Target Email : ${cleanEmail}`);
+      console.error(`  - Code         : ${mailError.code || 'UNKNOWN'}`);
+      console.error(`  - Command      : ${mailError.command || 'UNKNOWN'}`);
+      console.error(`  - Response     : ${mailError.response || mailError.message}`);
+
+      return res.status(500).json({
+        success: false,
+        error: `Email delivery failed: ${mailError.message}`,
+        code: mailError.code || 'ESMTP'
+      });
+    }
+
   } catch (err) {
-    console.error('[Registration Error]:', err);
-    return res.status(500).json({ success: false, error: err.message });
+    console.error('[Registration Internal Error]:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 });
 
@@ -199,6 +240,13 @@ app.post(['/api/borrowers/login', '/api/borrower/login'], (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid password.' });
     }
 
+    if (user.is_active === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account is not activated yet. Please click the activation link sent to your email.'
+      });
+    }
+
     return res.json({
       success: true,
       message: 'Login successful.',
@@ -207,7 +255,7 @@ app.post(['/api/borrowers/login', '/api/borrower/login'], (req, res) => {
         full_name: user.full_name || user.name,
         email: user.email,
         department: user.department || 'BSIT',
-        is_active: user.is_active !== false
+        is_active: true
       }
     });
   } catch (err) {
@@ -216,61 +264,11 @@ app.post(['/api/borrowers/login', '/api/borrower/login'], (req, res) => {
   }
 });
 
-app.post('/api/auth/forgot-password', (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ success: false, error: 'Email address is required.' });
-    }
-
-    const cleanEmail = email.trim().toLowerCase();
-    const db = loadDb();
-    const user = (db.requesters || []).find(u => (u.email || '').toLowerCase() === cleanEmail);
-
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'No account registered with that email.' });
-    }
-
-    const tempPassword = crypto.randomBytes(4).toString('hex');
-    user.password = tempPassword;
-    saveDb(db);
-
-    sendEmailAsync({
-      from: `"CDM SmartTrack Support" <${GMAIL_USER}>`,
-      to: cleanEmail,
-      subject: 'Temporary Password - CDM SmartTrack',
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9; border-radius: 8px;">
-          <h2 style="color: #059669;">Temporary Password</h2>
-          <p>Your temporary password to access your CDM SmartTrack account is:</p>
-          <div style="padding: 10px 15px; background-color: #e5e7eb; border-radius: 6px; font-weight: bold; font-size: 18px; letter-spacing: 2px; display: inline-block;">
-            ${tempPassword}
-          </div>
-          <p style="margin-top: 15px; color: #555;">Please use this password to sign in via the mobile application.</p>
-        </div>
-      `
-    });
-
-    return res.json({
-      success: true,
-      message: 'Temporary password generated.',
-      tempPassword
-    });
-  } catch (err) {
-    console.error('[Forgot Password Error]:', err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 app.get('/api/public/inventory', (req, res) => {
   try {
     const db = loadDb();
-    return res.json({
-      success: true,
-      inventory: db.inventory || []
-    });
+    return res.json({ success: true, inventory: db.inventory || [] });
   } catch (err) {
-    console.error('[Inventory Error]:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -283,20 +281,16 @@ app.post(['/api/public/requests', '/api/requests'], (req, res) => {
     }
 
     const db = loadDb();
-    if (!Array.isArray(db.requests)) {
-      db.requests = [];
-    }
+    if (!Array.isArray(db.requests)) db.requests = [];
 
     const item = (db.inventory || []).find(i => i.id === itemId);
-    const qty = parseInt(quantity, 10) || 1;
-
     const newRequest = {
       id: 'REQ-' + Date.now().toString(36).toUpperCase(),
       itemId,
       itemName: item ? item.name : 'Unknown Equipment',
       requesterId,
       requesterName: requesterName || 'Borrower',
-      quantity: qty,
+      quantity: parseInt(quantity, 10) || 1,
       purpose: purpose || 'Academic Class Activity',
       status: 'Pending',
       created_at: new Date().toISOString()
@@ -305,13 +299,8 @@ app.post(['/api/public/requests', '/api/requests'], (req, res) => {
     db.requests.unshift(newRequest);
     saveDb(db);
 
-    return res.status(201).json({
-      success: true,
-      message: 'Borrow request submitted successfully.',
-      request: newRequest
-    });
+    return res.status(201).json({ success: true, message: 'Borrow request submitted successfully.', request: newRequest });
   } catch (err) {
-    console.error('[Request Error]:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -327,12 +316,8 @@ app.get(['/api/public/requests', '/api/requests'], (req, res) => {
       requests = requests.filter(r => (r.requesterId || '').toLowerCase() === cleanId);
     }
 
-    return res.json({
-      success: true,
-      requests
-    });
+    return res.json({ success: true, requests });
   } catch (err) {
-    console.error('[Fetch Requests Error]:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
