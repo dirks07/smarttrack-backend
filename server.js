@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const brevo = require('@getbrevo/brevo');
 const crypto = require('crypto');
 
 const app = express();
@@ -13,15 +12,7 @@ app.use(express.json());
 const DB_FILE = path.join(__dirname, 'data.json');
 const BASE_URL = process.env.RENDER_BASE_URL || 'https://smarttrack-backend-v614.onrender.com';
 const SENDER_EMAIL = process.env.SENDER_EMAIL || 'dirkshaned@gmail.com';
-
-// Initialize Brevo Transactional Email Client
-const apiInstance = new brevo.TransactionalEmailsApi();
-if (process.env.BREVO_API_KEY) {
-  apiInstance.setApiKey(
-    brevo.TransactionalEmailsApiApiKeys.apiKey,
-    process.env.BREVO_API_KEY
-  );
-}
+const BREVO_KEY = process.env.BREVO_API_KEY || '';
 
 const initialData = {
   admins: [{ id: 1, full_name: "Lead Custodian", username: "admin", password: "password123" }],
@@ -100,53 +91,68 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
 
   const activationLink = `${BASE_URL}/api/borrowers/verify-email?token=${activationToken}`;
 
-  // Brevo Transactional Email Dispatch with Dark-Theme Button Card
-  try {
-    const sendSmtpEmail = new brevo.SendSmtpEmail();
-    sendSmtpEmail.sender = { name: "CDM SmartTrack", email: SENDER_EMAIL };
-    sendSmtpEmail.to = [{ email: cleanEmail, name: newRequester.full_name }];
-    sendSmtpEmail.subject = "Verify your CDM SmartTrack Account";
-    sendSmtpEmail.htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <body style="margin: 0; padding: 20px; background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        <div style="max-width: 480px; margin: 0 auto; background-color: #161b22; border-radius: 16px; border: 1px solid #30363d; overflow: hidden; color: #ffffff;">
-          <div style="height: 4px; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
-          <div style="padding: 32px 24px; text-align: center;">
-            <div style="font-size: 38px; margin-bottom: 12px;">📦</div>
-            <h2 style="color: #ffffff; margin: 0 0 4px 0; font-size: 20px; font-weight: 800; letter-spacing: 0.5px;">CDM SMARTTRACK</h2>
-            <p style="color: #8b949e; font-size: 13px; margin: 0 0 24px 0;">Colegio de Montalban Borrower Portal</p>
-            <div style="border-top: 1px solid #21262d; margin: 0 0 24px 0;"></div>
-            
-            <p style="text-align: left; color: #f0f6fc; font-size: 15px; font-weight: 700; margin: 0 0 12px 0;">
-              Hello ${newRequester.full_name} (Student Borrower),
-            </p>
-            <p style="text-align: left; color: #8b949e; font-size: 14px; line-height: 1.5; margin: 0 0 28px 0;">
-              Your account registration has been initialized. Tap the button below to verify your email and activate your access to laboratory equipment borrowing.
-            </p>
+  // Native HTTP Fetch to Brevo API (No external npm packages required)
+  if (BREVO_KEY) {
+    try {
+      const emailPayload = {
+        sender: { name: "CDM SmartTrack", email: SENDER_EMAIL },
+        to: [{ email: cleanEmail, name: newRequester.full_name }],
+        subject: "Verify your CDM SmartTrack Account",
+        htmlContent: `
+          <!DOCTYPE html>
+          <html>
+          <body style="margin: 0; padding: 20px; background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            <div style="max-width: 480px; margin: 0 auto; background-color: #161b22; border-radius: 16px; border: 1px solid #30363d; overflow: hidden; color: #ffffff;">
+              <div style="height: 4px; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
+              <div style="padding: 32px 24px; text-align: center;">
+                <div style="font-size: 38px; margin-bottom: 12px;">📦</div>
+                <h2 style="color: #ffffff; margin: 0 0 4px 0; font-size: 20px; font-weight: 800; letter-spacing: 0.5px;">CDM SMARTTRACK</h2>
+                <p style="color: #8b949e; font-size: 13px; margin: 0 0 24px 0;">Colegio de Montalban Borrower Portal</p>
+                <div style="border-top: 1px solid #21262d; margin: 0 0 24px 0;"></div>
+                
+                <p style="text-align: left; color: #f0f6fc; font-size: 15px; font-weight: 700; margin: 0 0 12px 0;">
+                  Hello ${newRequester.full_name} (Student Borrower),
+                </p>
+                <p style="text-align: left; color: #8b949e; font-size: 14px; line-height: 1.5; margin: 0 0 28px 0;">
+                  Your account registration has been initialized. Tap the button below to verify your email and activate your access to laboratory equipment borrowing.
+                </p>
 
-            <a href="${activationLink}" target="_blank" style="background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 15px; display: inline-block; width: 80%;">
-              Activate My Account &rarr;
-            </a>
+                <a href="${activationLink}" target="_blank" style="background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 15px; display: inline-block; width: 80%;">
+                  Activate My Account &rarr;
+                </a>
 
-            <div style="margin-top: 28px; border: 1px dashed #30363d; border-radius: 10px; padding: 12px; background-color: #0d1117;">
-              <p style="color: #8b949e; font-size: 12px; margin: 0;">
-                ⏳ This link expires in <strong>15 minutes</strong>. If you did not initiate this request, you can safely ignore this email.
-              </p>
+                <div style="margin-top: 28px; border: 1px dashed #30363d; border-radius: 10px; padding: 12px; background-color: #0d1117;">
+                  <p style="color: #8b949e; font-size: 12px; margin: 0;">
+                    ⏳ This link expires in <strong>15 minutes</strong>. If you did not initiate this request, you can safely ignore this email.
+                  </p>
+                </div>
+              </div>
+              <div style="background-color: #0d1117; padding: 12px; text-align: center; border-top: 1px solid #21262d;">
+                <p style="color: #484f58; font-size: 11px; margin: 0;">Colegio de Montalban • Laboratory & Equipment Management</p>
+              </div>
             </div>
-          </div>
-          <div style="background-color: #0d1117; padding: 12px; text-align: center; border-top: 1px solid #21262d;">
-            <p style="color: #484f58; font-size: 11px; margin: 0;">Colegio de Montalban • Laboratory & Equipment Management</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
+          </body>
+          </html>
+        `
+      };
 
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log(`[Brevo] Activation email sent successfully to: ${cleanEmail}`);
-  } catch (err) {
-    console.error('[Brevo Error]:', err?.response?.body || err?.message || err);
+      const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'api-key': BREVO_KEY,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(emailPayload)
+      });
+
+      const brevoData = await brevoRes.json();
+      console.log('[Brevo HTTP Dispatch Result]:', brevoData);
+    } catch (err) {
+      console.error('[Brevo Dispatch Error]:', err.message || err);
+    }
+  } else {
+    console.warn('BREVO_API_KEY is not defined in environment variables.');
   }
 
   res.json({
