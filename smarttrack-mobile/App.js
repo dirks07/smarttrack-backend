@@ -6,952 +6,899 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  FlatList,
   Modal,
+  Alert,
   ActivityIndicator,
   StatusBar,
-  SafeAreaView,
-  Alert
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 const API_BASE_URL = 'https://smarttrack-backend-v614.onrender.com';
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory' | 'tickets'
 
-  // Form Fields
+  // Auth form states
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [loginId, setLoginId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  const [regFullName, setRegFullName] = useState('');
+  const [regName, setRegName] = useState('');
   const [regId, setRegId] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regDept, setRegDept] = useState('BSIT');
   const [regPassword, setRegPassword] = useState('');
 
-  // Modals & Status
+  // UI state
   const [loading, setLoading] = useState(false);
-  const [showSentModal, setShowSentModal] = useState(false);
-  const [sentEmailAddress, setSentEmailAddress] = useState('');
-  const [borrowModalItem, setBorrowModalItem] = useState(null);
-  const [borrowQty, setBorrowQty] = useState('1');
-  const [borrowPurpose, setBorrowPurpose] = useState('Academic Laboratory Project');
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showActivationModal, setShowActivationModal] = useState(false);
+  const [activationEmailSent, setActivationEmailSent] = useState('');
 
-  // App Tabs
-  const [activeTab, setActiveTab] = useState('Catalog');
-  const [catalog, setCatalog] = useState([]);
+  // Data states
+  const [inventory, setInventory] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState('All');
   const [tickets, setTickets] = useState([]);
 
-  const fetchInventory = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/public/inventory`);
-      const data = await res.json();
-      if (Array.isArray(data)) setCatalog(data);
-    } catch (e) {
-      console.log('Error fetching inventory:', e);
-    }
-  };
-
-  const fetchTickets = async (id) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/public/requests?identifier=${id}`);
-      const data = await res.json();
-      if (Array.isArray(data)) setTickets(data);
-    } catch (e) {
-      console.log('Error fetching tickets:', e);
-    }
-  };
+  // Borrow Modal state
+  const [borrowModalVisible, setBorrowModalVisible] = useState(false);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [borrowQty, setBorrowQty] = useState('1');
+  const [borrowPurpose, setBorrowPurpose] = useState('');
 
   useEffect(() => {
-    if (currentUser) {
+    if (user) {
       fetchInventory();
-      fetchTickets(currentUser.identifier);
-      const interval = setInterval(() => {
-        fetchTickets(currentUser.identifier);
-      }, 5000);
-      return () => clearInterval(interval);
+      fetchTickets();
     }
-  }, [currentUser]);
+  }, [user]);
 
+  // SAFE REQUEST HELPER: Prevents "JSON Parse error: Unexpected character: N"
+  const safeFetch = async (url, options = {}) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for cold Render starts
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+      });
+      clearTimeout(timeoutId);
+
+      const contentType = response.headers.get('content-type') || '';
+      let data = null;
+
+      if (contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        const rawText = await response.text();
+        throw new Error(
+          response.status === 404
+            ? 'Endpoint route not found on server (404). Ensure backend is deployed.'
+            : `Server returned non-JSON (${response.status}): ${rawText.slice(0, 120)}`
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || `Request failed with status ${response.status}`);
+      }
+
+      return data;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        throw new Error('Server took too long to respond. Render is waking up; please try again in 15 seconds.');
+      }
+      throw err;
+    }
+  };
+
+  // ----------------- AUTH HANDLERS -----------------
   const handleLogin = async () => {
-    if (!loginId || !loginPassword) {
-      Alert.alert('Notice', 'Please enter your ID and password');
+    if (!loginId.trim() || !loginPassword.trim()) {
+      Alert.alert('Required Fields', 'Please enter your ID and password.');
       return;
     }
+
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/borrowers/login`, {
+      const data = await safeFetch(`${API_BASE_URL}/api/borrowers/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: loginId, password: loginPassword })
+        body: JSON.stringify({
+          identifier: loginId.trim(),
+          password: loginPassword.trim(),
+        }),
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setCurrentUser(data.user);
-      } else {
-        Alert.alert('Login Notice', data.error || 'Login failed');
-      }
+
+      setUser(data.user);
     } catch (err) {
-      Alert.alert('Connection Diagnostic', `Target: ${API_BASE_URL}\n\nDetail: ${err.message || String(err)}`);
+      Alert.alert('Sign In Failed', err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const handleRegister = async () => {
-    if (!regFullName || !regId || !regEmail || !regPassword) {
-      Alert.alert('Notice', 'Please fill out all registration fields.');
+    if (!regName.trim() || !regId.trim() || !regEmail.trim() || !regPassword.trim()) {
+      Alert.alert('Required Fields', 'Please fill in all registration fields.');
       return;
     }
-    setLoading(true);
 
+    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/borrowers/register`, {
+      await safeFetch(`${API_BASE_URL}/api/borrowers/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          full_name: regFullName,
-          identifier: regId,
-          email: regEmail,
-          department: regDept,
-          password: regPassword
-        })
+          full_name: regName.trim(),
+          identifier: regId.trim(),
+          email: regEmail.trim().toLowerCase(),
+          department: regDept.trim() || 'BSIT',
+          password: regPassword.trim(),
+        }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setSentEmailAddress(regEmail);
-        setShowSentModal(true);
-      } else {
-        Alert.alert('Registration Notice', data.error || 'Registration failed');
-      }
+      setActivationEmailSent(regEmail.trim().toLowerCase());
+      setShowActivationModal(true);
     } catch (err) {
-      Alert.alert(
-        'Exact Connection Error',
-        `URL: ${API_BASE_URL}/api/borrowers/register\n\nError: ${err.message || String(err)}`
-      );
+      Alert.alert('Registration Notice', err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmitBorrow = async () => {
-    if (!borrowModalItem) return;
+  // ----------------- DATA HANDLERS -----------------
+  const fetchInventory = async () => {
+    try {
+      const data = await safeFetch(`${API_BASE_URL}/api/public/inventory`);
+      setInventory(data);
+    } catch (err) {
+      console.warn('Inventory fetch error:', err.message);
+    }
+  };
+
+  const fetchTickets = async () => {
+    if (!user) return;
+    try {
+      const data = await safeFetch(`${API_BASE_URL}/api/public/requests?identifier=${encodeURIComponent(user.identifier)}`);
+      setTickets(data);
+    } catch (err) {
+      console.warn('Tickets fetch error:', err.message);
+    }
+  };
+
+  const submitBorrowRequest = async () => {
+    if (!selectedItem) return;
+    const qty = parseInt(borrowQty, 10);
+    if (isNaN(qty) || qty <= 0 || qty > selectedItem.quantity) {
+      Alert.alert('Invalid Quantity', `Available items: ${selectedItem.quantity}`);
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/public/requests`, {
+      await safeFetch(`${API_BASE_URL}/api/public/requests`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          requester_name: currentUser.full_name,
-          identifier: currentUser.identifier,
-          item_name: borrowModalItem.name,
-          quantity: parseInt(borrowQty) || 1,
-          purpose: borrowPurpose
-        })
+          requester_name: user.full_name,
+          identifier: user.identifier,
+          item_name: selectedItem.name,
+          quantity: qty,
+          purpose: borrowPurpose.trim() || 'Laboratory Work',
+        }),
       });
-      const data = await res.json();
-      if (res.ok) {
-        setBorrowModalItem(null);
-        setShowSuccessModal(true);
-        fetchTickets(currentUser.identifier);
-        setActiveTab('My Tickets');
-      } else {
-        Alert.alert('Error', data.error || 'Failed to submit requisition');
-      }
-    } catch (e) {
-      Alert.alert('Error', 'Error submitting request');
+
+      Alert.alert('Success', 'Borrow ticket requested successfully!');
+      setBorrowModalVisible(false);
+      setSelectedItem(null);
+      setBorrowPurpose('');
+      setBorrowQty('1');
+      fetchTickets();
+      setActiveTab('tickets');
+    } catch (err) {
+      Alert.alert('Submission Error', err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  if (!currentUser) {
+  const categories = ['All', 'Equipment', 'Laboratory', 'Audio/Visual'];
+  const filteredInventory = selectedCategory === 'All'
+    ? inventory
+    : inventory.filter(item => item.category === selectedCategory);
+
+  // ----------------- AUTH SCREENS -----------------
+  if (!user) {
     return (
-      <SafeAreaView style={styles.authContainer}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.headerArea}>
-          <Text style={styles.brandTitle}>CDM SMARTTRACK</Text>
-          <Text style={styles.brandSubtitle}>Colegio de Montalban Borrower</Text>
-        </View>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.container}>
+          <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
+          <ScrollView contentContainerStyle={styles.authScroll} keyboardShouldPersistTaps="handled">
+            <View style={styles.brandHeader}>
+              <Text style={styles.brandTitle}>CDM SMARTTRACK</Text>
+              <Text style={styles.brandSubtitle}>Colegio de Montalban</Text>
+            </View>
 
-        {!isRegisterMode ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Borrower Sign In</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Student / Faculty ID"
-              placeholderTextColor="#64748b"
-              value={loginId}
-              onChangeText={setLoginId}
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor="#64748b"
-              value={loginPassword}
-              onChangeText={setLoginPassword}
-              secureTextEntry
-            />
-
-            <TouchableOpacity style={styles.primaryButton} onPress={handleLogin} disabled={loading}>
-              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign In</Text>}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.switchButton} onPress={() => setIsRegisterMode(true)}>
-              <Text style={styles.switchText}>New Borrower? Register with Gmail →</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Borrower Registration</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Full Name (e.g. Juan Dela Cruz)"
-              placeholderTextColor="#64748b"
-              value={regFullName}
-              onChangeText={setRegFullName}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Student / Faculty ID (e.g. 2023-0012)"
-              placeholderTextColor="#64748b"
-              value={regId}
-              onChangeText={setRegId}
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Active Gmail Address"
-              placeholderTextColor="#64748b"
-              value={regEmail}
-              onChangeText={setRegEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="BSIT"
-              placeholderTextColor="#64748b"
-              value={regDept}
-              onChangeText={setRegDept}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Create Password"
-              placeholderTextColor="#64748b"
-              value={regPassword}
-              onChangeText={setRegPassword}
-              secureTextEntry
-            />
-
-            <TouchableOpacity style={styles.primaryButton} onPress={handleRegister} disabled={loading}>
-              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Send Activation Email</Text>}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.switchButton} onPress={() => setIsRegisterMode(false)}>
-              <Text style={styles.switchText}>Already registered? Sign In →</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        <Modal visible={showSentModal} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View style={styles.activationDialog}>
-              <Text style={styles.dialogHeading}>Activation Link Sent!</Text>
-              <Text style={styles.dialogText}>
-                We have sent an activation button to <Text style={{ color: '#fff', fontWeight: 'bold' }}>{sentEmailAddress}</Text>.
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>
+                {isRegisterMode ? 'Borrower Registration' : 'Borrower Sign In'}
               </Text>
 
-              <Text style={styles.stepText}>1. Open your Gmail.</Text>
-              <Text style={styles.stepText}>2. Tap "Activate My Account".</Text>
-              <Text style={styles.stepText}>3. Come back here and Sign In!</Text>
+              {isRegisterMode ? (
+                <>
+                  <Text style={styles.inputLabel}>Full Name</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Mae Morales"
+                    placeholderTextColor="#484F58"
+                    value={regName}
+                    onChangeText={setRegName}
+                  />
+
+                  <Text style={styles.inputLabel}>Student / Faculty ID</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="2022-00123"
+                    placeholderTextColor="#484F58"
+                    value={regId}
+                    onChangeText={setRegId}
+                    autoCapitalize="characters"
+                  />
+
+                  <Text style={styles.inputLabel}>Gmail Address</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="student@gmail.com"
+                    placeholderTextColor="#484F58"
+                    value={regEmail}
+                    onChangeText={setRegEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+
+                  <Text style={styles.inputLabel}>Department</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="BSIT"
+                    placeholderTextColor="#484F58"
+                    value={regDept}
+                    onChangeText={setRegDept}
+                  />
+
+                  <Text style={styles.inputLabel}>Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    placeholderTextColor="#484F58"
+                    secureTextEntry
+                    value={regPassword}
+                    onChangeText={setRegPassword}
+                  />
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, loading && styles.buttonDisabled]}
+                    onPress={handleRegister}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Send Activation Email</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.switchButton}
+                    onPress={() => setIsRegisterMode(false)}
+                  >
+                    <Text style={styles.switchButtonText}>Already registered? Sign In</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.inputLabel}>Student / Faculty ID</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="2022-00123"
+                    placeholderTextColor="#484F58"
+                    value={loginId}
+                    onChangeText={setLoginId}
+                    autoCapitalize="characters"
+                  />
+
+                  <Text style={styles.inputLabel}>Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    placeholderTextColor="#484F58"
+                    secureTextEntry
+                    value={loginPassword}
+                    onChangeText={setLoginPassword}
+                  />
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, loading && styles.buttonDisabled]}
+                    onPress={handleLogin}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Sign In</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.switchButton}
+                    onPress={() => setIsRegisterMode(true)}
+                  >
+                    <Text style={styles.switchButtonText}>New Borrower? Register with Gmail &rarr;</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+
+            {/* ACTIVATION CONFIRMATION MODAL */}
+            <Modal
+              visible={showActivationModal}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setShowActivationModal(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalCard}>
+                  <Text style={styles.modalIcon}>📬</Text>
+                  <Text style={styles.modalHeader}>Activation Link Sent!</Text>
+                  <Text style={styles.modalMessage}>
+                    We sent an activation link to:
+                  </Text>
+                  <Text style={styles.modalEmail}>{activationEmailSent}</Text>
+                  <Text style={styles.modalSubMessage}>
+                    Please open your Gmail and tap the "Activate My Account" button to complete registration.
+                  </Text>
+
+                  <TouchableOpacity
+                    style={styles.modalButton}
+                    onPress={() => {
+                      setShowActivationModal(false);
+                      setIsRegisterMode(false);
+                    }}
+                  >
+                    <Text style={styles.modalButtonText}>I Understand, Proceed to Sign In</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
+          </ScrollView>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
+
+  // ----------------- MAIN APP DASHBOARD -----------------
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
+
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerTitle}>CDM SMARTTRACK</Text>
+            <Text style={styles.headerSubtitle}>
+              {user.full_name} • {user.identifier}
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.logoutButton} onPress={() => setUser(null)}>
+            <Text style={styles.logoutText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Tab Navigation */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'inventory' && styles.activeTab]}
+            onPress={() => setActiveTab('inventory')}
+          >
+            <Text style={[styles.tabText, activeTab === 'inventory' && styles.activeTabText]}>
+              Available Items
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'tickets' && styles.activeTab]}
+            onPress={() => {
+              setActiveTab('tickets');
+              fetchTickets();
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === 'tickets' && styles.activeTabText]}>
+              My Requests ({tickets.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Inventory Tab */}
+        {activeTab === 'inventory' ? (
+          <View style={styles.flexOne}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryBar}>
+              {categories.map(cat => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.categoryTag, selectedCategory === cat && styles.categoryTagActive]}
+                  onPress={() => setSelectedCategory(cat)}
+                >
+                  <Text style={[styles.categoryText, selectedCategory === cat && styles.categoryTextActive]}>
+                    {cat}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <FlatList
+              data={filteredInventory}
+              keyExtractor={item => item.id.toString()}
+              contentContainerStyle={styles.listPadding}
+              renderItem={({ item }) => (
+                <View style={styles.itemCard}>
+                  <View style={styles.itemInfo}>
+                    <Text style={styles.itemCode}>{item.asset_code}</Text>
+                    <Text style={styles.itemName}>{item.name}</Text>
+                    <Text style={styles.itemCategory}>{item.category}</Text>
+                  </View>
+                  <View style={styles.itemAction}>
+                    <Text style={styles.itemQty}>{item.quantity} available</Text>
+                    <TouchableOpacity
+                      style={[styles.borrowBtn, item.quantity === 0 && styles.buttonDisabled]}
+                      disabled={item.quantity === 0}
+                      onPress={() => {
+                        setSelectedItem(item);
+                        setBorrowQty('1');
+                        setBorrowPurpose('');
+                        setBorrowModalVisible(true);
+                      }}
+                    >
+                      <Text style={styles.borrowBtnText}>Borrow</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            />
+          </View>
+        ) : (
+          /* Tickets Tab */
+          <FlatList
+            data={tickets}
+            keyExtractor={item => item.id.toString()}
+            contentContainerStyle={styles.listPadding}
+            renderItem={({ item }) => (
+              <View style={styles.ticketCard}>
+                <View style={styles.ticketTopRow}>
+                  <Text style={styles.ticketId}>Ticket #{item.id}</Text>
+                  <View
+                    style={[
+                      styles.statusPill,
+                      item.status === 'APPROVED' && styles.statusApproved,
+                      item.status === 'CLAIMED' && styles.statusClaimed,
+                      item.status === 'RETURNED' && styles.statusReturned,
+                    ]}
+                  >
+                    <Text style={styles.statusPillText}>{item.status}</Text>
+                  </View>
+                </View>
+                <Text style={styles.ticketItemName}>
+                  {item.item_name} ({item.quantity} unit)
+                </Text>
+                <Text style={styles.ticketPurpose}>Purpose: {item.purpose}</Text>
+                <Text style={styles.ticketDate}>Date: {item.created_at}</Text>
+              </View>
+            )}
+          />
+        )}
+
+        {/* Borrow Modal */}
+        <Modal
+          visible={borrowModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setBorrowModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalHeader}>Request Item</Text>
+              <Text style={styles.modalSubHeader}>{selectedItem?.name}</Text>
+
+              <Text style={styles.inputLabel}>Quantity</Text>
+              <TextInput
+                style={styles.input}
+                value={borrowQty}
+                onChangeText={setBorrowQty}
+                keyboardType="numeric"
+              />
+
+              <Text style={styles.inputLabel}>Purpose of Borrowing</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                placeholder="e.g. Capstone laboratory testing"
+                placeholderTextColor="#484F58"
+                value={borrowPurpose}
+                onChangeText={setBorrowPurpose}
+                multiline
+              />
 
               <TouchableOpacity
-                style={styles.dialogButton}
-                onPress={() => {
-                  setShowSentModal(false);
-                  setIsRegisterMode(false);
-                }}
+                style={[styles.primaryButton, loading && styles.buttonDisabled]}
+                onPress={submitBorrowRequest}
+                disabled={loading}
               >
-                <Text style={styles.dialogButtonText}>GO TO SIGN IN</Text>
+                {loading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Submit Borrow Request</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setBorrowModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
       </SafeAreaView>
-    );
-  }
-
-  return (
-    <SafeAreaView style={styles.mainContainer}>
-      <StatusBar barStyle="light-content" />
-
-      <View style={styles.portalHeader}>
-        <View>
-          <Text style={styles.portalTitle}>CDM SmartTrack</Text>
-          <Text style={styles.portalSubtitle}>
-            {currentUser.full_name} ({currentUser.identifier})
-          </Text>
-        </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={() => setCurrentUser(null)}>
-          <Text style={styles.logoutText}>Logout</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'Catalog' && styles.tabItemActive]}
-          onPress={() => setActiveTab('Catalog')}
-        >
-          <Text style={[styles.tabLabel, activeTab === 'Catalog' && styles.tabLabelActive]}>Catalog</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'My Tickets' && styles.tabItemActive]}
-          onPress={() => setActiveTab('My Tickets')}
-        >
-          <Text style={[styles.tabLabel, activeTab === 'My Tickets' && styles.tabLabelActive]}>
-            My Tickets ({tickets.length})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {activeTab === 'Catalog' ? (
-        <ScrollView style={styles.contentArea}>
-          <View style={styles.searchBar}>
-            <Text style={{ color: '#64748b' }}>🔍  Search items or asset codes...</Text>
-          </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-            {['All', 'Equipment', 'Audio/Visual', 'Laboratory', 'Access'].map((tag, idx) => (
-              <View key={idx} style={[styles.filterChip, idx === 0 && styles.filterChipActive]}>
-                <Text style={[styles.filterText, idx === 0 && styles.filterTextActive]}>{tag}</Text>
-              </View>
-            ))}
-          </ScrollView>
-
-          {catalog.map((item) => (
-            <View key={item.id} style={styles.itemCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemName}>{item.name}</Text>
-                <Text style={styles.itemTag}>Tag: {item.asset_code} • {item.category}</Text>
-                <Text style={styles.itemAvail}>Available: {item.quantity}</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.borrowBtn}
-                onPress={() => {
-                  setBorrowModalItem(item);
-                  setBorrowQty('1');
-                }}
-              >
-                <Text style={styles.borrowBtnText}>Borrow</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-          <View style={{ height: 60 }} />
-        </ScrollView>
-      ) : (
-        <ScrollView style={styles.contentArea}>
-          {tickets.length === 0 ? (
-            <Text style={{ color: '#64748b', textAlign: 'center', marginTop: 40 }}>No requests submitted yet.</Text>
-          ) : (
-            tickets.map((t) => (
-              <View key={t.id} style={styles.ticketCard}>
-                <View style={styles.ticketHeader}>
-                  <Text style={styles.ticketNumber}>Ticket #{t.id}</Text>
-                  <View style={[
-                    styles.statusBadge,
-                    t.status === 'PENDING' && styles.badgePending,
-                    t.status === 'APPROVED' && styles.badgeApproved,
-                    t.status === 'CLAIMED' && styles.badgeClaimed,
-                    t.status === 'RETURNED' && styles.badgeReturned
-                  ]}>
-                    <Text style={[
-                      styles.statusBadgeText,
-                      t.status === 'PENDING' && { color: '#f59e0b' },
-                      t.status === 'APPROVED' && { color: '#10b981' },
-                      t.status === 'CLAIMED' && { color: '#38bdf8' },
-                      t.status === 'RETURNED' && { color: '#60a5fa' }
-                    ]}>{t.status}</Text>
-                  </View>
-                </View>
-
-                <Text style={styles.ticketItemName}>{t.item_name}</Text>
-                <Text style={styles.ticketDetails}>Quantity: {t.quantity}</Text>
-                <Text style={styles.ticketDetails}>Purpose: {t.purpose}</Text>
-                <Text style={styles.ticketDetails}>Submitted: {t.created_at || '10/15/2026'}</Text>
-
-                {t.status === 'PENDING' && (
-                  <View style={styles.pendingBox}>
-                    <Text style={styles.pendingText}>⏳ Pending Admin Review. Pull down to refresh your status.</Text>
-                  </View>
-                )}
-
-                {t.status === 'APPROVED' && (
-                  <View style={styles.approvedBox}>
-                    <Text style={styles.approvedHeader}>✓ Request Approved by Admin</Text>
-                    <Text style={styles.approvedSub}>Present this pass to the custodian counter to claim your equipment:</Text>
-                    <View style={styles.payloadBox}>
-                      <Text style={styles.payloadTitle}>CUSTODIAN SCAN PAYLOAD:</Text>
-                      <Text style={styles.payloadCode}>TICKET-{t.id}:{t.identifier}:{t.quantity}</Text>
-                    </View>
-                  </View>
-                )}
-
-                {t.status === 'CLAIMED' && (
-                  <View style={styles.claimedBox}>
-                    <Text style={styles.claimedHeader}>● Equipment Released</Text>
-                    <Text style={styles.claimedSub}>This item has been physically released to you. Return it in good condition before the deadline.</Text>
-                  </View>
-                )}
-
-                {t.status === 'RETURNED' && (
-                  <View style={styles.returnedBox}>
-                    <Text style={styles.returnedHeader}>✓ Item Returned & Inspected</Text>
-                    <Text style={styles.returnedSub}>Returned on: {t.returned_on || '10/15/2026'}</Text>
-                    <Text style={styles.auditText}>Condition Audit: {t.condition_audit || 'Good Condition'}</Text>
-                  </View>
-                )}
-              </View>
-            ))
-          )}
-          <View style={{ height: 60 }} />
-        </ScrollView>
-      )}
-
-      <Modal visible={!!borrowModalItem} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.borrowModalCard}>
-            <Text style={styles.borrowModalHeading}>Borrow Equipment</Text>
-            <Text style={styles.modalItemTitle}>{borrowModalItem?.name}</Text>
-            <Text style={styles.modalInStock}>In Stock: {borrowModalItem?.quantity}</Text>
-
-            <Text style={styles.modalLabel}>Quantity Needed:</Text>
-            <TextInput
-              style={styles.modalInput}
-              keyboardType="number-pad"
-              value={borrowQty}
-              onChangeText={setBorrowQty}
-            />
-
-            <Text style={styles.modalLabel}>Purpose / Activity:</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={borrowPurpose}
-              onChangeText={setBorrowPurpose}
-            />
-
-            <View style={styles.modalButtonRow}>
-              <TouchableOpacity style={styles.cancelModalBtn} onPress={() => setBorrowModalItem(null)}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.submitModalBtn} onPress={handleSubmitBorrow} disabled={loading}>
-                {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Submit Request</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={showSuccessModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.successDialog}>
-            <Text style={styles.dialogHeading}>Success</Text>
-            <Text style={styles.dialogText}>Requisition submitted for Admin review.</Text>
-            <TouchableOpacity style={styles.successBtn} onPress={() => setShowSuccessModal(false)}>
-              <Text style={styles.successBtnText}>OK</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  authContainer: {
+  container: {
     flex: 1,
-    backgroundColor: '#0b1329',
-    justifyContent: 'center',
-    paddingHorizontal: 24
+    backgroundColor: '#0B0F17',
   },
-  headerArea: {
+  flexOne: {
+    flex: 1,
+  },
+  authScroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  brandHeader: {
     alignItems: 'center',
-    marginBottom: 28
+    marginBottom: 28,
   },
   brandTitle: {
-    color: '#10b981',
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '800',
-    letterSpacing: 1
+    color: '#10B981',
+    letterSpacing: 1.5,
   },
   brandSubtitle: {
-    color: '#94a3b8',
     fontSize: 13,
-    marginTop: 4
+    color: '#8B949E',
+    marginTop: 4,
   },
   card: {
-    backgroundColor: '#121d3a',
-    borderRadius: 16,
-    padding: 20,
+    backgroundColor: '#161B22',
+    borderRadius: 14,
+    padding: 22,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: '#30363D',
   },
   cardTitle: {
-    color: '#ffffff',
-    fontSize: 17,
+    fontSize: 19,
     fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 18,
     textAlign: 'center',
-    marginBottom: 20
+  },
+  inputLabel: {
+    color: '#8B949E',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    marginTop: 10,
   },
   input: {
-    backgroundColor: '#0a1024',
+    backgroundColor: '#0D1117',
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: '#30363D',
     borderRadius: 8,
-    color: '#ffffff',
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontSize: 14,
-    marginBottom: 12
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
+  textArea: {
+    height: 80,
+    textAlignVertical: 'top',
   },
   primaryButton: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#10B981',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 8
+    marginTop: 20,
   },
-  buttonText: {
-    color: '#ffffff',
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 15
+    fontSize: 15,
   },
   switchButton: {
     marginTop: 18,
-    alignItems: 'center'
+    alignItems: 'center',
   },
-  switchText: {
-    color: '#38bdf8',
-    fontSize: 13
+  switchButtonText: {
+    color: '#58A6FF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24
-  },
-  activationDialog: {
-    backgroundColor: '#262d3d',
-    borderRadius: 12,
     padding: 24,
-    width: '100%',
-    maxWidth: 360
   },
-  dialogHeading: {
-    color: '#ffffff',
-    fontSize: 17,
+  modalCard: {
+    backgroundColor: '#161B22',
+    borderRadius: 14,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#30363D',
+    alignItems: 'center',
+  },
+  modalIcon: {
+    fontSize: 42,
+    marginBottom: 12,
+  },
+  modalHeader: {
+    fontSize: 19,
     fontWeight: '700',
-    marginBottom: 12
+    color: '#FFFFFF',
+    marginBottom: 8,
   },
-  dialogText: {
-    color: '#94a3b8',
+  modalSubHeader: {
+    fontSize: 14,
+    color: '#10B981',
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  modalMessage: {
+    fontSize: 14,
+    color: '#8B949E',
+    textAlign: 'center',
+  },
+  modalEmail: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#10B981',
+    marginVertical: 8,
+    textAlign: 'center',
+  },
+  modalSubMessage: {
     fontSize: 13,
+    color: '#8B949E',
+    textAlign: 'center',
+    marginBottom: 20,
     lineHeight: 18,
-    marginBottom: 16
   },
-  stepText: {
-    color: '#e2e8f0',
-    fontSize: 13,
-    lineHeight: 20
+  modalButton: {
+    backgroundColor: '#10B981',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    width: '100%',
+    alignItems: 'center',
   },
-  dialogButton: {
-    marginTop: 24,
-    alignSelf: 'flex-end'
-  },
-  dialogButtonText: {
-    color: '#10b981',
+  modalButtonText: {
+    color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 13
+    fontSize: 14,
   },
-  mainContainer: {
-    flex: 1,
-    backgroundColor: '#0b1329'
+  cancelButton: {
+    marginTop: 12,
+    paddingVertical: 8,
   },
-  portalHeader: {
+  cancelButtonText: {
+    color: '#8B949E',
+    fontSize: 14,
+  },
+  header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e293b'
+    borderBottomColor: '#21262D',
   },
-  portalTitle: {
-    color: '#10b981',
-    fontSize: 16,
-    fontWeight: '800'
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#10B981',
+    letterSpacing: 1,
   },
-  portalSubtitle: {
-    color: '#94a3b8',
+  headerSubtitle: {
     fontSize: 12,
-    marginTop: 2
+    color: '#8B949E',
+    marginTop: 2,
   },
-  logoutBtn: {
-    backgroundColor: '#1e293b',
+  logoutButton: {
+    backgroundColor: '#21262D',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 6
+    borderRadius: 6,
   },
   logoutText: {
-    color: '#ffffff',
+    color: '#F85149',
     fontSize: 12,
-    fontWeight: '600'
+    fontWeight: '600',
   },
-  tabBar: {
+  tabContainer: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: '#1e293b'
+    borderBottomColor: '#21262D',
   },
-  tabItem: {
+  tab: {
     flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center'
+    paddingVertical: 14,
+    alignItems: 'center',
   },
-  tabItemActive: {
+  activeTab: {
     borderBottomWidth: 2,
-    borderBottomColor: '#10b981'
+    borderBottomColor: '#10B981',
   },
-  tabLabel: {
-    color: '#64748b',
+  tabText: {
+    color: '#8B949E',
     fontSize: 14,
-    fontWeight: '600'
+    fontWeight: '600',
   },
-  tabLabelActive: {
-    color: '#10b981'
+  activeTabText: {
+    color: '#FFFFFF',
   },
-  contentArea: {
-    flex: 1,
-    padding: 16
-  },
-  searchBar: {
-    backgroundColor: '#121d3a',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    marginBottom: 14
-  },
-  filterRow: {
-    flexDirection: 'row',
-    marginBottom: 16
-  },
-  filterChip: {
-    backgroundColor: '#121d3a',
+  categoryBar: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
+    paddingVertical: 12,
+    maxHeight: 56,
+  },
+  categoryTag: {
+    backgroundColor: '#161B22',
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: '#30363D',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
   },
-  filterChipActive: {
-    backgroundColor: '#0a3628',
-    borderColor: '#10b981'
+  categoryTagActive: {
+    backgroundColor: '#10B981',
+    borderColor: '#10B981',
   },
-  filterText: {
-    color: '#94a3b8',
-    fontSize: 12
+  categoryText: {
+    color: '#8B949E',
+    fontSize: 13,
+    fontWeight: '500',
   },
-  filterTextActive: {
-    color: '#10b981',
-    fontWeight: '700'
+  categoryTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  listPadding: {
+    padding: 16,
+    paddingBottom: 40,
   },
   itemCard: {
-    backgroundColor: '#121d3a',
+    backgroundColor: '#161B22',
     borderRadius: 12,
     padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: '#30363D',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  itemInfo: {
+    flex: 1,
+  },
+  itemCode: {
+    color: '#8B949E',
+    fontSize: 11,
+    fontWeight: '700',
   },
   itemName: {
-    color: '#ffffff',
+    color: '#FFFFFF',
     fontSize: 15,
-    fontWeight: '700'
+    fontWeight: '700',
   },
-  itemTag: {
-    color: '#94a3b8',
+  itemCategory: {
+    color: '#10B981',
     fontSize: 12,
-    marginTop: 4
+    marginTop: 2,
   },
-  itemAvail: {
-    color: '#10b981',
+  itemAction: {
+    alignItems: 'flex-end',
+    marginLeft: 12,
+  },
+  itemQty: {
+    color: '#8B949E',
     fontSize: 12,
-    fontWeight: '600',
-    marginTop: 4
+    marginBottom: 8,
   },
   borrowBtn: {
-    backgroundColor: '#10b981',
-    paddingHorizontal: 18,
+    backgroundColor: '#10B981',
+    paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 8
+    borderRadius: 6,
   },
   borrowBtnText: {
-    color: '#ffffff',
+    color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 13
+    fontSize: 13,
   },
   ticketCard: {
-    backgroundColor: '#121d3a',
+    backgroundColor: '#161B22',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 14,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: '#30363D',
   },
-  ticketHeader: {
+  ticketTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10
+    marginBottom: 8,
   },
-  ticketNumber: {
-    color: '#94a3b8',
+  ticketId: {
+    color: '#58A6FF',
     fontSize: 13,
-    fontWeight: '600'
+    fontWeight: '700',
   },
-  statusBadge: {
-    paddingHorizontal: 10,
+  statusPill: {
+    backgroundColor: '#D29922',
+    paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 20
-  },
-  badgePending: {
-    backgroundColor: '#451a03',
-    borderColor: '#f59e0b',
-    borderWidth: 1
-  },
-  badgeApproved: {
-    backgroundColor: '#064e3b',
-    borderColor: '#10b981',
-    borderWidth: 1
-  },
-  badgeClaimed: {
-    backgroundColor: '#0c4a6e',
-    borderColor: '#38bdf8',
-    borderWidth: 1
-  },
-  badgeReturned: {
-    backgroundColor: '#1e3a8a',
-    borderColor: '#60a5fa',
-    borderWidth: 1
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  ticketItemName: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 6
-  },
-  ticketDetails: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginBottom: 3
-  },
-  pendingBox: {
-    marginTop: 12,
-    backgroundColor: '#0a1024',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#1e293b'
-  },
-  pendingText: {
-    color: '#94a3b8',
-    fontSize: 12
-  },
-  approvedBox: {
-    marginTop: 12,
-    backgroundColor: '#042f2e',
-    padding: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#10b981'
-  },
-  approvedHeader: {
-    color: '#10b981',
-    fontWeight: '700',
-    fontSize: 13,
-    marginBottom: 4
-  },
-  approvedSub: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginBottom: 10
-  },
-  payloadBox: {
-    backgroundColor: '#021814',
     borderRadius: 6,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#10b981',
-    alignItems: 'center'
   },
-  payloadTitle: {
-    color: '#10b981',
+  statusApproved: {
+    backgroundColor: '#1F6FEB',
+  },
+  statusClaimed: {
+    backgroundColor: '#10B981',
+  },
+  statusReturned: {
+    backgroundColor: '#8B949E',
+  },
+  statusPillText: {
+    color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5
+    letterSpacing: 0.5,
   },
-  payloadCode: {
-    color: '#ffffff',
+  ticketItemName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  ticketPurpose: {
+    color: '#8B949E',
     fontSize: 13,
-    fontWeight: '800',
-    marginTop: 2
+    marginTop: 4,
   },
-  claimedBox: {
-    marginTop: 12,
-    backgroundColor: '#082f49',
-    padding: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#0284c7'
+  ticketDate: {
+    color: '#484F58',
+    fontSize: 11,
+    marginTop: 6,
   },
-  claimedHeader: {
-    color: '#38bdf8',
-    fontWeight: '700',
-    fontSize: 13,
-    marginBottom: 4
-  },
-  claimedSub: {
-    color: '#94a3b8',
-    fontSize: 12
-  },
-  returnedBox: {
-    marginTop: 12,
-    backgroundColor: '#172554',
-    padding: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2563eb'
-  },
-  returnedHeader: {
-    color: '#60a5fa',
-    fontWeight: '700',
-    fontSize: 13,
-    marginBottom: 4
-  },
-  returnedSub: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginBottom: 2
-  },
-  auditText: {
-    color: '#93c5fd',
-    fontSize: 12,
-    fontWeight: '600'
-  },
-  borrowModalCard: {
-    backgroundColor: '#121d3a',
-    borderRadius: 16,
-    padding: 20,
-    width: '100%',
-    maxWidth: 380,
-    borderWidth: 1,
-    borderColor: '#1e293b'
-  },
-  borrowModalHeading: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 4
-  },
-  modalItemTitle: {
-    color: '#38bdf8',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 2
-  },
-  modalInStock: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginBottom: 16
-  },
-  modalLabel: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 6
-  },
-  modalInput: {
-    backgroundColor: '#0a1024',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderRadius: 8,
-    color: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    marginBottom: 14
-  },
-  modalButtonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8
-  },
-  cancelModalBtn: {
-    backgroundColor: '#1e293b',
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginRight: 8
-  },
-  cancelText: {
-    color: '#ffffff',
-    fontWeight: '600'
-  },
-  submitModalBtn: {
-    backgroundColor: '#10b981',
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginLeft: 8
-  },
-  submitText: {
-    color: '#ffffff',
-    fontWeight: '700'
-  },
-  successDialog: {
-    backgroundColor: '#262d3d',
-    borderRadius: 12,
-    padding: 20,
-    width: '100%',
-    maxWidth: 340
-  },
-  successBtn: {
-    marginTop: 20,
-    alignSelf: 'flex-end'
-  },
-  successBtnText: {
-    color: '#10b981',
-    fontWeight: '700',
-    fontSize: 14
-  }
 });
