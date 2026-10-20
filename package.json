@@ -22,7 +22,8 @@
     "react-native": "0.86.3",
     "react-native-qrcode-svg": "^6.3.26",
     "react-native-svg": "15.15.4",
-    "react-native-web": "^0.21.2"
+    "react-native-web": "^0.21.2",
+    "resend": "^6.34.1"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0"
