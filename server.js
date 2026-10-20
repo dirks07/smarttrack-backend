@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
@@ -10,11 +10,13 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const DB_FILE = path.join(__dirname, 'data.json');
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
 
+// ----------------- DATABASE HELPERS -----------------
 function loadDb() {
   try {
     if (!fs.existsSync(DB_FILE)) {
@@ -48,7 +50,7 @@ function saveDb(data) {
   }
 }
 
-// 1. SANITIZED SMTP CONFIGURATION & PREFLIGHT
+// ----------------- NODEMAILER TRANSPORTER -----------------
 const SMTP_USER = (process.env.GMAIL_USER || process.env.EMAIL_USER || '').trim();
 const SMTP_PASS = (process.env.GMAIL_APP_PASS || process.env.EMAIL_PASS || '').trim().replace(/\s+/g, '');
 
@@ -60,41 +62,23 @@ const transporter = nodemailer.createTransport({
     user: SMTP_USER,
     pass: SMTP_PASS
   },
-  logger: true,
-  debug: true,
   tls: {
     rejectUnauthorized: false
   }
 });
 
-if (SMTP_USER && SMTP_PASS) {
-  transporter.verify((error, success) => {
-    if (error) {
-      console.error('[SMTP Preflight FAILED]: Mail server rejected configuration:');
-      console.error(`  - Code: ${error.code}`);
-      console.error(`  - Response: ${error.response || error.message}`);
-    } else {
-      console.log(`[SMTP Preflight READY]: Authenticated as ${SMTP_USER}. Ready to dispatch.`);
-    }
-  });
-} else {
-  console.warn('[SMTP Warning]: Credentials missing in environment variables.');
-}
-
+// ----------------- HEALTH CHECK -----------------
 app.get('/', (req, res) => {
   res.json({ success: true, message: 'SmartTrack Core API running smoothly.' });
 });
 
-// 2. REGISTRATION CONTROLLER WITH VERBOSE LOGS
+// ----------------- BORROWER REGISTRATION -----------------
 app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/signup'], async (req, res) => {
   try {
     const { full_name, identifier, email, department, password } = req.body;
 
     if (!full_name || !identifier || !password || !email) {
-      return res.status(400).json({
-        success: false,
-        error: 'All registration fields are required.'
-      });
+      return res.status(400).json({ success: false, error: 'All registration fields are required.' });
     }
 
     const cleanEmail = email.trim().toLowerCase();
@@ -110,10 +94,7 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
     );
 
     if (existingIndex !== -1) {
-      return res.status(400).json({
-        success: false,
-        error: 'An account with that ID or Email already exists.'
-      });
+      return res.status(400).json({ success: false, error: 'An account with that ID or Email already exists.' });
     }
 
     const token = crypto.randomBytes(24).toString('hex');
@@ -132,14 +113,12 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
     const backendUrl = (process.env.RENDER_BASE_URL || 'https://smarttrack-backend-v6l4.onrender.com').replace(/\/+$/, '');
     const activationLink = `${backendUrl}/api/borrowers/verify-email?token=${token}`;
 
-    console.log(`[Registration Attempt] User: ${cleanId} | Email: ${cleanEmail}`);
-
     try {
-      const mailInfo = await transporter.sendMail({
+      await transporter.sendMail({
         from: `"CDM SmartTrack" <${SMTP_USER}>`,
         to: cleanEmail,
         subject: 'Verify your CDM SmartTrack Account',
-        text: `Hello ${full_name.trim()},\n\nPlease activate your CDM SmartTrack account by opening this URL:\n${activationLink}\n\nIf you did not request this, please disregard.`,
+        text: `Hello ${full_name.trim()},\n\nPlease activate your CDM SmartTrack account by opening this URL:\n${activationLink}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;">
             <h2 style="color: #059669; margin-top: 0;">CDM SmartTrack Verification</h2>
@@ -152,15 +131,9 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
                 Activate My Account &rarr;
               </a>
             </div>
-            <p style="font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-              If the button does not work, copy and paste this link into your browser:<br>
-              <a href="${activationLink}" style="color: #059669; word-break: break-all;">${activationLink}</a>
-            </p>
           </div>
         `
       });
-
-      console.log(`[SMTP Sent]: Delivered to ${cleanEmail}. Message ID: ${mailInfo.messageId}`);
 
       db.requesters.push(newBorrower);
       saveDb(db);
@@ -169,30 +142,21 @@ app.post(['/api/borrowers/register', '/api/borrower/register', '/api/public/sign
         success: true,
         message: 'Activation link sent! Please check your email inbox to activate your account.'
       });
-
-    } catch (mailError) {
-      console.error('[SMTP Dispatch Failure]:');
-      console.error(`  - Target Email : ${cleanEmail}`);
-      console.error(`  - Code         : ${mailError.code || 'UNKNOWN'}`);
-      console.error(`  - Command      : ${mailError.command || 'UNKNOWN'}`);
-      console.error(`  - Response     : ${mailError.response || mailError.message}`);
-
+    } catch (mailErr) {
+      console.error('[SMTP Send Error]:', mailErr.message);
       return res.status(500).json({
         success: false,
-        error: `Email delivery failed: ${mailError.message}`,
-        code: mailError.code || 'ESMTP'
+        error: `Email delivery failed: ${mailErr.message}`,
+        code: mailErr.code || 'ESMTP'
       });
     }
-
   } catch (err) {
-    console.error('[Registration Internal Error]:', err);
-    return res.status(500).json({
-      success: false,
-      error: err.message
-    });
+    console.error('[Registration Error]:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// ----------------- BORROWER VERIFY EMAIL -----------------
 app.get('/api/borrowers/verify-email', (req, res) => {
   const { token } = req.query;
   if (!token) {
@@ -219,6 +183,7 @@ app.get('/api/borrowers/verify-email', (req, res) => {
   `);
 });
 
+// ----------------- BORROWER LOGIN -----------------
 app.post(['/api/borrowers/login', '/api/borrower/login'], (req, res) => {
   try {
     const { identifier, password } = req.body;
@@ -264,6 +229,7 @@ app.post(['/api/borrowers/login', '/api/borrower/login'], (req, res) => {
   }
 });
 
+// ----------------- INVENTORY & REQUESTS -----------------
 app.get('/api/public/inventory', (req, res) => {
   try {
     const db = loadDb();
@@ -299,7 +265,11 @@ app.post(['/api/public/requests', '/api/requests'], (req, res) => {
     db.requests.unshift(newRequest);
     saveDb(db);
 
-    return res.status(201).json({ success: true, message: 'Borrow request submitted successfully.', request: newRequest });
+    return res.status(201).json({
+      success: true,
+      message: 'Borrow request submitted successfully.',
+      request: newRequest
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
